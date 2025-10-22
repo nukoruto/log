@@ -1,0 +1,28 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ds-contract"
+version = "0.1.0"
+description = "Data contract command-line tools."
+authors = [
+    {name = "Log Project", email = "devnull@example.com"},
+]
+requires-python = ">=3.11"
+dependencies = []
+
+[project.optional-dependencies]
+test = [
+    "pytest",
+]
+
+[project.scripts]
+ds-contract = "ds_contract.cli:main"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
