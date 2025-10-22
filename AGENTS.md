@@ -14,7 +14,7 @@ log/
     log_generator/     # C: 設計に基づく擬似ログ生成（CLI: log-generator）
     models_lstm/       # D: LSTM 学習・推論・スコア（CLI: models-lstm）
     matlab_bridge/     # E: Simulink 連携 .mat 出力（CLI: matlab-bridge）
-  docs/                # 実験手法・契約・方針（md）
+  methods_5parts/      # 実験手法・契約・方針（md）
   matlab/              # 可視化・指標算出の .m / モデル（任意）
   scripts/             # A→B→C→D→E を繋ぐユーティリティ
   .env.example         # GPU_MODE=rtx6000|rtx4060|cpu 等

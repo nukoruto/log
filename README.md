@@ -38,7 +38,7 @@ log/
     log_generator/       # C: 設計に基づくCSV生成（normal/anom）
     models_lstm/         # D: LSTM 学習・推論・スコアリング
     matlab_bridge/       # E: .mat エクスポート（From Workspace 用）
-  docs/
+  methods_5parts/
     A_data_contract_dt.md
     B_scenario_design.md
     C_log_generator.md
