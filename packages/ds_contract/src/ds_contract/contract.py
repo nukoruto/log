@@ -25,6 +25,7 @@ REQUIRED_CONTRACT_FIELDS: Final[frozenset[str]] = frozenset(
         "path",
         "referer",
         "user_agent",
+        "ip",
         "op_category",
     }
 )
