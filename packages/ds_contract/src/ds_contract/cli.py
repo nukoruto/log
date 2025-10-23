@@ -12,15 +12,16 @@ from collections import defaultdict
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Iterable, Sequence, cast
+from typing import Iterable, Sequence
 
 from .contract import CONTRACT_COLUMNS, REQUIRED_CONTRACT_FIELDS, ensure_required_fields
+from .sessionize import (
+    EPSILON,
+    SESSION_COLUMNS,
+    sessionize_contract,
+    quantile,
+)
 
-
-SESSION_COLUMNS: list[str] = list(CONTRACT_COLUMNS) + [
-    "delta_t_seconds",
-    "log_delta_t",
-]
 
 DELTIFIED_COLUMNS: list[str] = SESSION_COLUMNS + [
     "robust_z",
@@ -30,7 +31,6 @@ DELTIFIED_COLUMNS: list[str] = SESSION_COLUMNS + [
     "burst_ratio",
 ]
 
-EPSILON = 1e-3
 MAD_SCALE = 1.4826
 CLIP_RANGE = (-5.0, 5.0)
 
@@ -78,31 +78,6 @@ class JsonLogger:
         self.emit(event="error", **payload)
 
 
-def _quantile(values: list[float], q: float) -> float:
-    if not values:
-        raise ValueError("Cannot compute quantile of empty sequence")
-    sorted_values = sorted(values)
-    return _quantile_sorted(sorted_values, q)
-
-
-def _quantile_sorted(sorted_values: list[float], q: float) -> float:
-    if not sorted_values:
-        raise ValueError("Cannot compute quantile of empty sequence")
-    if q <= 0:
-        return sorted_values[0]
-    if q >= 1:
-        return sorted_values[-1]
-    position = (len(sorted_values) - 1) * q
-    lower_index = math.floor(position)
-    upper_index = math.ceil(position)
-    if lower_index == upper_index:
-        return sorted_values[lower_index]
-    lower_value = sorted_values[lower_index]
-    upper_value = sorted_values[upper_index]
-    weight = position - lower_index
-    return lower_value * (1 - weight) + upper_value * weight
-
-
 def _median(values: list[float]) -> float:
     if not values:
         raise ValueError("Cannot compute median of empty sequence")
@@ -118,28 +93,6 @@ def _mad(values: list[float], median: float) -> float:
     if not deviations:
         return 0.0
     return _median(deviations)
-
-
-def _histogram(
-    values: list[float], bins: int, min_value: float, max_value: float
-) -> tuple[list[int], list[float]]:
-    if bins <= 0:
-        bins = 1
-    if math.isclose(max_value, min_value):
-        return [len(values)], [min_value, max_value]
-    width = (max_value - min_value) / bins
-    if width <= 0:
-        width = 1.0
-    edges = [min_value + i * width for i in range(bins + 1)]
-    counts = [0 for _ in range(bins)]
-    for value in values:
-        if value >= max_value:
-            index = bins - 1
-        else:
-            index = int((value - min_value) / width)
-            index = max(0, min(index, bins - 1))
-        counts[index] += 1
-    return counts, edges
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -340,19 +293,20 @@ def _handle_sessionize(
             hint="Run validate on a non-empty dataset before sessionize.",
         )
 
-    threshold_seconds, method, histogram_info, ratio = _select_session_threshold(rows)
-    sessionized = _assign_sessions(rows, threshold_seconds)
+    result = sessionize_contract(rows)
+    sessionized = result.rows
 
     _write_csv(output_path, SESSION_COLUMNS, sessionized)
 
     meta = {
         "seed": args.seed,
         "input_sha256": _compute_sha256(input_path),
-        "method": method,
-        "threshold_seconds": threshold_seconds,
-        "log_threshold": math.log(threshold_seconds + EPSILON),
-        "histogram": histogram_info,
-        "within_class_variance_ratio": ratio,
+        "method": result.method,
+        "threshold_seconds": result.threshold_seconds,
+        "log_threshold": result.log_threshold,
+        "histogram": result.histogram,
+        "bins": result.bins,
+        "within_class_variance_ratio": result.within_class_variance_ratio,
         "epsilon": EPSILON,
     }
     meta_path.write_text(
@@ -361,8 +315,8 @@ def _handle_sessionize(
 
     return {
         "row_count": len(sessionized),
-        "threshold_seconds": threshold_seconds,
-        "method": method,
+        "threshold_seconds": result.threshold_seconds,
+        "method": result.method,
         "input_sha256": meta["input_sha256"],
     }
 
@@ -437,10 +391,11 @@ def _load_mapping(path: Path) -> dict[str, str]:
         normalized[key] = value
 
     missing = ensure_required_fields(normalized.keys())
-    if missing:
+    required_missing = frozenset(field for field in missing if field != "ip")
+    if required_missing:
         raise CommandError(
             "MISSING_MAPPING",
-            f"Mapping file lacks required contract columns: {sorted(missing)}.",
+            f"Mapping file lacks required contract columns: {sorted(required_missing)}.",
             hint="Add source column mappings for all required contract fields.",
         )
     return normalized
@@ -489,7 +444,7 @@ def _read_and_normalize_contract(
             for column in CONTRACT_COLUMNS:
                 source_column = mapping.get(column)
                 value = raw_row.get(source_column, "") if source_column else ""
-                if column in REQUIRED_CONTRACT_FIELDS and not value:
+                if column in REQUIRED_CONTRACT_FIELDS and column != "ip" and not value:
                     raise CommandError(
                         "MISSING_REQUIRED_VALUE",
                         f"Row {index} is missing required column '{source_column}'.",
@@ -576,244 +531,6 @@ def _load_contract_rows(path: Path) -> list[dict[str, str]]:
     return rows
 
 
-def _select_session_threshold(
-    rows: list[dict[str, str]],
-) -> tuple[float, str, dict[str, object], float]:
-    delta_seconds: list[float] = []
-    last_timestamp_per_uid: dict[str, datetime] = {}
-    timestamps_per_uid: dict[str, list[datetime]] = defaultdict(list)
-
-    for row in rows:
-        uid = row["uid"]
-        timestamp = datetime.fromisoformat(row["timestamp_utc"])
-        previous = last_timestamp_per_uid.get(uid)
-        if previous is None:
-            delta_seconds.append(0.0)
-        else:
-            delta_seconds.append(max((timestamp - previous).total_seconds(), 0.0))
-        last_timestamp_per_uid[uid] = timestamp
-        timestamps_per_uid[uid].append(timestamp)
-
-    positive_deltas = [value for value in delta_seconds[1:] if value > 0]
-    if not positive_deltas:
-        threshold = 3600.0
-        histogram = cast(
-            dict[str, object],
-            {"bin_edges": [], "counts": [], "fd_width": None, "bin_count": 0},
-        )
-        return threshold, "elbow", histogram, 1.0
-
-    log_values = [math.log(value + EPSILON) for value in positive_deltas]
-    min_log = min(log_values)
-    max_log = max(log_values)
-
-    if math.isclose(max_log, min_log, rel_tol=1e-12, abs_tol=1e-12):
-        histogram = cast(
-            dict[str, object],
-            {
-                "bin_edges": [min_log, max_log],
-                "counts": [len(log_values)],
-                "fd_width": None,
-                "bin_count": 1,
-            },
-        )
-        return math.exp(max_log), "elbow", histogram, 1.0
-
-    q75 = _quantile(log_values, 0.75)
-    q25 = _quantile(log_values, 0.25)
-    iqr = q75 - q25
-    count = len(log_values)
-    width = 0.0
-    if count > 0:
-        width = 2 * iqr / (count ** (1 / 3)) if count > 0 else 0.0
-    if width <= 0 or not math.isfinite(width):
-        span = max_log - min_log
-        width = span / 64 if span > 0 else 1.0
-
-    span = max_log - min_log
-    bin_count = int(math.ceil(span / width)) if width > 0 else 32
-    bin_count = max(32, min(256, bin_count))
-
-    counts, edges = _histogram(log_values, bin_count, min_log, max_log)
-    total = sum(counts)
-    probabilities = [count / total if total else 0.0 for count in counts]
-    bin_centers = [
-        (edges[index] + edges[index + 1]) / 2 for index in range(len(counts))
-    ]
-
-    omega: list[float] = []
-    mu: list[float] = []
-    running_prob = 0.0
-    running_mu = 0.0
-    for prob, center in zip(probabilities, bin_centers):
-        running_prob += prob
-        running_mu += prob * center
-        omega.append(running_prob)
-        mu.append(running_mu)
-
-    mu_total = mu[-1] if mu else 0.0
-    sigma_between: list[float] = []
-    for idx, w in enumerate(omega):
-        if w <= 0 or w >= 1:
-            sigma_between.append(0.0)
-            continue
-        numerator = (mu_total * w - mu[idx]) ** 2
-        denominator = w * (1 - w)
-        sigma_between.append(numerator / denominator if denominator else 0.0)
-
-    otsu_index = max(range(len(sigma_between)), key=lambda i: sigma_between[i])
-    otsu_threshold_log = bin_centers[otsu_index]
-
-    w0 = omega[otsu_index]
-    w1 = 1.0 - w0
-    variance_total = sum(
-        prob * (center - mu_total) ** 2
-        for prob, center in zip(probabilities, bin_centers)
-    )
-    if w0 > 0:
-        mu0 = mu[otsu_index] / w0
-        var0 = (
-            sum(
-                probabilities[i] * (bin_centers[i] - mu0) ** 2
-                for i in range(otsu_index + 1)
-            )
-            / w0
-        )
-    else:
-        var0 = 0.0
-    if w1 > 0:
-        mu1 = (mu_total - mu[otsu_index]) / w1
-        var1 = (
-            sum(
-                probabilities[i] * (bin_centers[i] - mu1) ** 2
-                for i in range(otsu_index + 1, len(bin_centers))
-            )
-            / w1
-        )
-    else:
-        var1 = 0.0
-    if variance_total == 0:
-        ratio = 1.0
-    else:
-        ratio = (w0 * var0 + w1 * var1) / variance_total
-
-    histogram = cast(
-        dict[str, object],
-        {
-            "bin_edges": [float(edge) for edge in edges],
-            "counts": [int(count) for count in counts],
-            "fd_width": float(width),
-            "bin_count": bin_count,
-        },
-    )
-
-    if ratio < 0.9:
-        method = "otsu"
-        threshold = math.exp(otsu_threshold_log)
-        return threshold, method, histogram, ratio
-
-    method = "elbow"
-    threshold = _elbow_threshold(log_values, timestamps_per_uid)
-    return threshold, method, histogram, ratio
-
-
-def _elbow_threshold(
-    log_values: list[float], timestamps_per_uid: dict[str, list[datetime]]
-) -> float:
-    sorted_values = sorted(log_values)
-    unique_values = sorted(set(sorted_values))
-    if len(unique_values) == 1:
-        return math.exp(unique_values[0])
-
-    thresholds = unique_values
-    min_val = thresholds[0]
-    max_val = thresholds[-1]
-
-    session_counts = []
-    for tau in thresholds:
-        threshold_seconds = math.exp(tau)
-        count = _count_sessions_for_threshold(timestamps_per_uid, threshold_seconds)
-        session_counts.append(count)
-
-    range_val = max_val - min_val
-    norm_x = [((tau - min_val) / range_val) if range_val else 0.0 for tau in thresholds]
-    min_sessions = min(session_counts)
-    max_sessions = max(session_counts)
-    if max_sessions == min_sessions:
-        return math.exp(_median(thresholds))
-    session_range = max_sessions - min_sessions
-    norm_y = [
-        (count - min_sessions) / session_range if session_range else 0.0
-        for count in session_counts
-    ]
-
-    x0 = norm_x[0]
-    y0 = norm_y[0]
-    x1 = norm_x[-1]
-    y1 = norm_y[-1]
-    if math.isclose(x1, x0):
-        slope = 0.0
-    else:
-        slope = (y1 - y0) / (x1 - x0)
-
-    distances = [
-        abs((ny - y0) - slope * (nx - x0)) / math.sqrt(1 + slope**2)
-        for nx, ny in zip(norm_x, norm_y)
-    ]
-    best_index = max(range(len(distances)), key=lambda i: distances[i])
-    return math.exp(thresholds[best_index])
-
-
-def _count_sessions_for_threshold(
-    timestamps_per_uid: dict[str, list[datetime]], threshold_seconds: float
-) -> int:
-    total_sessions = 0
-    for times in timestamps_per_uid.values():
-        if not times:
-            continue
-        count = 1
-        for previous, current in zip(times, times[1:]):
-            if (current - previous).total_seconds() > threshold_seconds:
-                count += 1
-        total_sessions += count
-    return total_sessions
-
-
-def _assign_sessions(
-    rows: list[dict[str, str]], threshold_seconds: float
-) -> list[dict[str, str]]:
-    grouped: dict[str, list[dict[str, str]]] = defaultdict(list)
-    for row in rows:
-        grouped[row["uid"]].append(row)
-
-    for user_rows in grouped.values():
-        user_rows.sort(key=lambda item: item["timestamp_utc"])
-
-    sessionized: list[dict[str, str]] = []
-    for uid, user_rows in grouped.items():
-        current_session = 0
-        previous_time: datetime | None = None
-        for order, row in enumerate(user_rows, start=1):
-            timestamp = datetime.fromisoformat(row["timestamp_utc"])
-            if previous_time is None:
-                delta_seconds = 0.0
-                current_session += 1
-            else:
-                delta_seconds = max((timestamp - previous_time).total_seconds(), 0.0)
-                if delta_seconds > threshold_seconds:
-                    current_session += 1
-            previous_time = timestamp
-
-            session_row = dict(row)
-            session_row["session_id"] = f"{uid}-{current_session:04d}"
-            session_row["delta_t_seconds"] = f"{delta_seconds:.6f}"
-            session_row["log_delta_t"] = f"{math.log(delta_seconds + EPSILON):.12f}"
-            sessionized.append(session_row)
-
-    sessionized.sort(key=lambda item: item["timestamp_utc"])
-    return sessionized
-
-
 def _load_sessioned_rows(path: Path) -> list[dict[str, str]]:
     if not path.exists():
         raise CommandError(
@@ -883,8 +600,8 @@ def _compute_robust_features(
 
         history = previous_deltas[uid]
         if history:
-            q25 = float(_quantile(history, 0.25))
-            q75 = float(_quantile(history, 0.75))
+            q25 = float(quantile(history, 0.25))
+            q75 = float(quantile(history, 0.75))
             prev_delta = history[-1]
         else:
             q25 = delta_seconds
