@@ -11,6 +11,8 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Iterable, Sequence
 
+from . import inject
+
 CONTRACT_COLUMNS: tuple[str, ...] = (
     "timestamp_utc",
     "uid",
@@ -388,7 +390,12 @@ def generate_anom_records(
     events_by_user = _group_events_by_user(events)
     audit_entries: list[dict[str, Any]] = []
 
-    mutated_times = _apply_time_anomalies(events_by_user, spec, seed, audit_entries)
+    mutated_times = inject.apply_time_anomalies(
+        events_by_user=events_by_user,
+        time_specs=spec.time_anomalies,
+        seed=seed,
+        audit_entries=audit_entries,
+    )
     _apply_order_anomalies(events_by_user, spec, seed, audit_entries)
 
     events.sort(
@@ -452,61 +459,6 @@ def _group_events_by_user(
     for user_events in groups.values():
         user_events.sort(key=lambda item: item.user_step)
     return groups
-
-
-def _apply_time_anomalies(
-    events_by_user: dict[tuple[str, str], list[_GeneratedEvent]],
-    spec: ScenarioSpec,
-    seed: int,
-    audit_entries: list[dict[str, Any]],
-) -> dict[int, datetime]:
-    mutated_times: dict[int, datetime] = {}
-    rng = random.Random(seed + 1)
-
-    for user_events in events_by_user.values():
-        if not user_events:
-            continue
-
-        current_time = user_events[0].timestamp
-        propagate_multiplier = 1.0
-        propagate_delta = 0.0
-
-        for event in user_events:
-            mutated_times[event.index] = current_time
-            mutated_dt = event.dt_seconds * propagate_multiplier + propagate_delta
-
-            for time_spec in spec.time_anomalies:
-                if time_spec.op is not None and time_spec.op != event.op_name:
-                    continue
-
-                if rng.random() <= time_spec.probability:
-                    before = mutated_dt
-                    mutated_dt = _apply_time_adjustment(mutated_dt, time_spec)
-                    if time_spec.mode == "propagate":
-                        if time_spec.scale is not None:
-                            propagate_multiplier *= time_spec.scale
-                        if time_spec.delta is not None:
-                            propagate_delta += time_spec.delta
-
-                    audit_entry: dict[str, Any] = {
-                        "type": "time",
-                        "mode": time_spec.mode,
-                        "seed": seed,
-                        "record_index": event.index,
-                        "op": event.op_name,
-                        "seconds_before": before,
-                        "seconds_after": max(mutated_dt, 0.0),
-                    }
-                    if time_spec.scale is not None:
-                        audit_entry["scale"] = time_spec.scale
-                    if time_spec.delta is not None:
-                        audit_entry["delta"] = time_spec.delta
-                    audit_entries.append(audit_entry)
-
-            mutated_dt = max(mutated_dt, 0.0)
-            current_time = current_time + timedelta(seconds=mutated_dt)
-
-    return mutated_times
 
 
 def _apply_order_anomalies(
@@ -578,15 +530,6 @@ def _update_time_audit_entries(
             entry["op"] = event_op
         elif record_index == swap_index:
             entry["op"] = swap_op
-
-
-def _apply_time_adjustment(value: float, spec: TimeAnomalySpec) -> float:
-    result = value
-    if spec.scale is not None:
-        result *= spec.scale
-    if spec.delta is not None:
-        result += spec.delta
-    return result
 
 
 def _resolve_operation(spec: ScenarioSpec, op_name: str) -> OperationSpec:
