@@ -14,20 +14,13 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Iterable, Sequence, cast
 
+from .contract import CONTRACT_COLUMNS, REQUIRED_CONTRACT_FIELDS, ensure_required_fields
 
-CONTRACT_COLUMNS: list[str] = [
-    "timestamp_utc",
-    "uid",
-    "session_id",
-    "method",
-    "path",
-    "referer",
-    "user_agent",
-    "ip",
-    "op_category",
+
+SESSION_COLUMNS: list[str] = list(CONTRACT_COLUMNS) + [
+    "delta_t_seconds",
+    "log_delta_t",
 ]
-
-SESSION_COLUMNS: list[str] = CONTRACT_COLUMNS + ["delta_t_seconds", "log_delta_t"]
 
 DELTIFIED_COLUMNS: list[str] = SESSION_COLUMNS + [
     "robust_z",
@@ -36,18 +29,6 @@ DELTIFIED_COLUMNS: list[str] = SESSION_COLUMNS + [
     "prev_q75_seconds",
     "burst_ratio",
 ]
-
-REQUIRED_CONTRACT_FIELDS = {
-    "timestamp_utc",
-    "uid",
-    "session_id",
-    "method",
-    "path",
-    "referer",
-    "user_agent",
-    "ip",
-    "op_category",
-}
 
 EPSILON = 1e-3
 MAD_SCALE = 1.4826
@@ -194,7 +175,10 @@ def _register_validate(
         "--map", dest="mapping", required=True, help="YAML column mapping file"
     )
     parser.add_argument("--out", required=True, help="Contract CSV output path")
-    parser.add_argument("--meta", required=True, help="Metadata JSON output path")
+    parser.add_argument(
+        "--meta",
+        help="Metadata JSON output path (default: <out>.meta.json)",
+    )
     parser.set_defaults(handler=_handle_validate)
 
 
@@ -279,11 +263,20 @@ def _set_global_seed(seed: int) -> None:
         return
 
 
+def _default_meta_path(output_path: Path) -> Path:
+    stem = output_path.stem or output_path.name or "contract"
+    return output_path.with_name(f"{stem}.meta.json")
+
+
 def _handle_validate(args: argparse.Namespace, logger: JsonLogger) -> dict[str, object]:
     input_path = Path(args.input_csv)
     mapping_path = Path(args.mapping)
     output_path = Path(args.out)
-    meta_path = Path(args.meta)
+    meta_arg = getattr(args, "meta", None)
+    if meta_arg:
+        meta_path = Path(meta_arg)
+    else:
+        meta_path = _default_meta_path(output_path)
 
     logger.log_start(
         {
@@ -443,7 +436,7 @@ def _load_mapping(path: Path) -> dict[str, str]:
             )
         normalized[key] = value
 
-    missing = REQUIRED_CONTRACT_FIELDS.difference(normalized)
+    missing = ensure_required_fields(normalized.keys())
     if missing:
         raise CommandError(
             "MISSING_MAPPING",
@@ -572,7 +565,7 @@ def _load_contract_rows(path: Path) -> list[dict[str, str]]:
 
     with path.open("r", encoding="utf-8") as handle:
         reader = csv.DictReader(handle)
-        if reader.fieldnames != CONTRACT_COLUMNS:
+        if reader.fieldnames != list(CONTRACT_COLUMNS):
             raise CommandError(
                 "INVALID_CONTRACT_HEADER",
                 "Contract CSV must match the 9-column contract schema.",
