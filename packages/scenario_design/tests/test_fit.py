@@ -141,6 +141,41 @@ def test_fit_rejects_unknown_operations(tmp_path: Path) -> None:
     assert not stats_path.exists()
 
 
+@pytest.mark.parametrize("delta_value", ["NaN", "Infinity", "-1.0", "0.0"])
+def test_fit_rejects_non_finite_delta_t(tmp_path: Path, delta_value: str) -> None:
+    rows = [
+        "timestamp_utc,uid,session_id,method,path,referer,user_agent,ip,op_category,delta_t",
+        f"2024-01-01T00:00:00+00:00,u1,s1,GET,/auth,,ua,10.0.0.1,AUTH,{delta_value}",
+    ]
+    csv_path = tmp_path / "deltified.csv"
+    csv_path.write_text("\n".join(rows), encoding="utf-8")
+    stats_path = tmp_path / "stats.pkl"
+
+    seed = 17
+    result = run_cli(
+        [
+            "fit",
+            str(csv_path),
+            "--out",
+            str(stats_path),
+            "--seed",
+            str(seed),
+        ]
+    )
+    assert result.returncode != 0
+
+    stdout_lines = parse_json_lines(result.stdout)
+    assert stdout_lines[0]["event"] == "start"
+    assert stdout_lines[-1]["event"] == "error"
+    assert stdout_lines[-1]["error_code"] == "SCENARIO_DESIGN_FIT_ERROR"
+    message = stdout_lines[-1]["message"].lower()
+    assert "delta_t" in message
+    assert "finite positive" in message
+    assert "row 2" in message
+    assert delta_value.lower() in message
+    assert not stats_path.exists()
+
+
 def test_fit_requires_seed(tmp_path: Path) -> None:
     rows = [
         "timestamp_utc,uid,session_id,method,path,referer,user_agent,ip,op_category,delta_t",

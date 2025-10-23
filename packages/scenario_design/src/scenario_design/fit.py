@@ -59,7 +59,7 @@ def load_events(path: Path) -> List[Event]:
         if missing:
             raise ValueError(f"Missing required columns: {', '.join(missing)}")
 
-        for row in reader:
+        for line_number, row in enumerate(reader, start=2):
             op_raw = row["op_category"].strip()
             if op_raw.lower() in UNKNOWN_TOKENS:
                 raise ValueError("unknown op encountered in op_category column")
@@ -67,7 +67,21 @@ def load_events(path: Path) -> List[Event]:
             timestamp_raw = row["timestamp_utc"].strip()
             timestamp = _parse_utc_timestamp(timestamp_raw)
             session_id = row["session_id"].strip()
-            delta_t = float(row["delta_t"].strip())
+            delta_raw = row["delta_t"].strip()
+            try:
+                delta_t = float(delta_raw)
+            except ValueError as exc:
+                raise ValueError(
+                    "delta_t must be numeric seconds between events "
+                    f"(row {line_number}, value={delta_raw!r}). "
+                    "Regenerate deltified.csv to correct the data."
+                ) from exc
+            if not math.isfinite(delta_t) or delta_t <= 0.0:
+                raise ValueError(
+                    "delta_t must be a finite positive number "
+                    f"(row {line_number}, value={delta_raw!r}). "
+                    "Ensure deltified.csv contains strictly positive waiting times."
+                )
 
             events.append(
                 Event(
