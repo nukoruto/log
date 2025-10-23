@@ -45,6 +45,7 @@ REQUIRED_CONTRACT_FIELDS = {
     "path",
     "referer",
     "user_agent",
+    "ip",
     "op_category",
 }
 

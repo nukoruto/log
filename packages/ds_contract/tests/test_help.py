@@ -164,6 +164,7 @@ def test_validate_missing_required_column_fails(
             "method",
             "path",
             "user_agent",
+            "ip",
             "category",
         ],
         rows=[
@@ -174,6 +175,7 @@ def test_validate_missing_required_column_fails(
                 "method": "GET",
                 "path": "/index",
                 "user_agent": "ua",
+                "ip": "192.0.2.1",
                 "category": "view",
             }
         ],
@@ -189,6 +191,7 @@ def test_validate_missing_required_column_fails(
                 "path: path",
                 "referer: referer",
                 "user_agent: user_agent",
+                "ip: ip",
                 "op_category: category",
             ]
         )
