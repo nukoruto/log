@@ -191,8 +191,11 @@ def _parse_float(value: str | None, column: str) -> float:
     except (TypeError, ValueError) as exc:
         raise ExportError(f"{column} must be a finite float; got {value!r}") from exc
 
-    if not math.isfinite(numeric):
-        raise ExportError(f"{column} must be a finite float; got {value!r}")
+    if math.isnan(numeric):
+        raise ExportError(f"{column} must not contain NaN values; got {value!r}")
+
+    if math.isinf(numeric):
+        raise ExportError(f"{column} must not contain infinite values; got {value!r}")
 
     return numeric
 
