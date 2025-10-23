@@ -550,9 +550,34 @@ def _apply_order_anomalies(
                         next_event.op_spec,
                         event.op_spec,
                     )
+                    _update_time_audit_entries(
+                        audit_entries,
+                        event_index=event.index,
+                        event_op=event.op_name,
+                        swap_index=next_event.index,
+                        swap_op=next_event.op_name,
+                    )
                     idx += 2
                 else:
                     idx += 1
+
+
+def _update_time_audit_entries(
+    audit_entries: list[dict[str, Any]],
+    *,
+    event_index: int,
+    event_op: str,
+    swap_index: int,
+    swap_op: str,
+) -> None:
+    for entry in audit_entries:
+        if entry.get("type") != "time":
+            continue
+        record_index = entry.get("record_index")
+        if record_index == event_index:
+            entry["op"] = event_op
+        elif record_index == swap_index:
+            entry["op"] = swap_op
 
 
 def _apply_time_adjustment(value: float, spec: TimeAnomalySpec) -> float:
