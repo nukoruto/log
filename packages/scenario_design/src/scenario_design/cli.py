@@ -10,7 +10,12 @@ from typing import Any, Dict
 
 from . import __version__
 from .fit import compute_file_sha256, run_fit, seed_everything
-from .plan import PlanResult, run_plan
+from .plan import (
+    AnomalyOptionError,
+    PlanResult,
+    parse_anomaly_options,
+    run_plan,
+)
 
 
 class ArgumentParserError(Exception):
@@ -65,6 +70,16 @@ def build_parser() -> argparse.ArgumentParser:
         type=int,
         required=True,
         help="Random seed for deterministic scenario generation",
+    )
+    plan_parser.add_argument(
+        "--anom",
+        action="append",
+        default=[],
+        metavar="TYPE(args)",
+        help=(
+            "Anomaly specification, e.g. time(mode=propagate,p=0.02,scale=3.0). "
+            "May be provided multiple times."
+        ),
     )
 
     return parser
@@ -150,6 +165,21 @@ def main(argv: list[str] | None = None) -> int:
         stats_path: Path = args.stats
         output_path = args.out
         seed = args.seed
+        try:
+            anomalies = parse_anomaly_options(args.anom)
+        except AnomalyOptionError as exc:
+            log_event(
+                "error",
+                command="plan",
+                input=str(stats_path),
+                output=str(output_path),
+                message=str(exc),
+                error_code="SCENARIO_DESIGN_ARGUMENT_ERROR",
+                seed=seed,
+                input_sha256=None,
+            )
+            print(str(exc), file=sys.stderr)
+            return 2
         seed_everything(seed)
         stats_sha256: str | None = None
         if stats_path.exists():
@@ -166,7 +196,12 @@ def main(argv: list[str] | None = None) -> int:
             input_sha256=stats_sha256,
         )
         try:
-            result: PlanResult = run_plan(stats_path, output_path, seed=seed)
+            result: PlanResult = run_plan(
+                stats_path,
+                output_path,
+                seed=seed,
+                anomalies=anomalies,
+            )
         except Exception as exc:  # noqa: BLE001 - propagate as CLI failure
             log_event(
                 "error",
