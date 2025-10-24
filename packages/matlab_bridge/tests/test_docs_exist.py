@@ -19,4 +19,3 @@ def test_metrics_example_document_exists() -> None:
         assert (
             keyword in content
         ), f"サンプルスクリプトに指標 {keyword} の計算例が含まれていません。"
-
