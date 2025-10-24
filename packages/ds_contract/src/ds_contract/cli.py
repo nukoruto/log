@@ -6,33 +6,19 @@ import argparse
 import csv
 import hashlib
 import json
-import math
 import random
-from collections import defaultdict
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Iterable, Sequence
 
 from .contract import CONTRACT_COLUMNS, REQUIRED_CONTRACT_FIELDS, ensure_required_fields
+from .dt import DELTIFIED_COLUMNS, deltify_session_rows
 from .sessionize import (
     EPSILON,
     SESSION_COLUMNS,
     sessionize_contract,
-    quantile,
 )
-
-
-DELTIFIED_COLUMNS: list[str] = SESSION_COLUMNS + [
-    "robust_z",
-    "robust_z_clipped",
-    "prev_q25_seconds",
-    "prev_q75_seconds",
-    "burst_ratio",
-]
-
-MAD_SCALE = 1.4826
-CLIP_RANGE = (-5.0, 5.0)
 
 
 class CommandError(RuntimeError):
@@ -76,23 +62,6 @@ class JsonLogger:
         if hint:
             payload["hint"] = hint
         self.emit(event="error", **payload)
-
-
-def _median(values: list[float]) -> float:
-    if not values:
-        raise ValueError("Cannot compute median of empty sequence")
-    sorted_values = sorted(values)
-    mid = len(sorted_values) // 2
-    if len(sorted_values) % 2 == 1:
-        return sorted_values[mid]
-    return (sorted_values[mid - 1] + sorted_values[mid]) / 2
-
-
-def _mad(values: list[float], median: float) -> float:
-    deviations = [abs(value - median) for value in values]
-    if not deviations:
-        return 0.0
-    return _median(deviations)
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -338,21 +307,21 @@ def _handle_deltify(args: argparse.Namespace, logger: JsonLogger) -> dict[str, o
             hint="Run sessionize before deltify on a populated dataset.",
         )
 
-    deltified, meta = _compute_robust_features(rows)
+    result = deltify_session_rows(rows)
+    meta = dict(result.meta)
     meta.update(
         {
             "seed": args.seed,
             "input_sha256": _compute_sha256(input_path),
-            "clip_range": list(CLIP_RANGE),
         }
     )
-    _write_csv(output_path, DELTIFIED_COLUMNS, deltified)
+    _write_csv(output_path, DELTIFIED_COLUMNS, result.rows)
     meta_path.write_text(
         json.dumps(meta, indent=2, ensure_ascii=False), encoding="utf-8"
     )
 
     return {
-        "row_count": len(deltified),
+        "row_count": len(result.rows),
         "fallback_users": meta.get("fallback_users", []),
         "input_sha256": meta["input_sha256"],
     }
@@ -551,92 +520,6 @@ def _load_sessioned_rows(path: Path) -> list[dict[str, str]]:
 
     rows.sort(key=lambda item: item["timestamp_utc"])
     return rows
-
-
-def _compute_robust_features(
-    rows: list[dict[str, str]],
-) -> tuple[list[dict[str, str]], dict[str, object]]:
-    log_values_per_user: dict[str, list[float]] = defaultdict(list)
-
-    for row in rows:
-        uid = row["uid"]
-        delta_seconds = float(row["delta_t_seconds"])
-        log_value = math.log(delta_seconds + EPSILON)
-        log_values_per_user[uid].append(log_value)
-
-    all_log_values = [
-        value for values in log_values_per_user.values() for value in values
-    ]
-    global_median = float(_median(all_log_values))
-    global_mad = float(_mad(all_log_values, global_median))
-    if global_mad == 0:
-        global_mad = 1e-9
-
-    user_stats: dict[str, tuple[float, float]] = {}
-    fallback_users: list[str] = []
-    for uid, values in log_values_per_user.items():
-        if len(values) >= 5:
-            median = float(_median(values))
-            mad = float(_mad(values, median))
-        else:
-            median = global_median
-            mad = global_mad
-            fallback_users.append(uid)
-        if mad == 0:
-            mad = global_mad
-        user_stats[uid] = (median, mad)
-
-    enriched_rows: list[dict[str, str]] = []
-    previous_deltas: dict[str, list[float]] = defaultdict(list)
-
-    for row in rows:
-        uid = row["uid"]
-        delta_seconds = float(row["delta_t_seconds"])
-        log_delta = math.log(delta_seconds + EPSILON)
-        median, mad = user_stats[uid]
-        denominator = MAD_SCALE * mad if mad else MAD_SCALE * global_mad
-        z_score = (log_delta - median) / denominator
-        clipped = max(CLIP_RANGE[0], min(CLIP_RANGE[1], z_score))
-
-        history = previous_deltas[uid]
-        if history:
-            q25 = float(quantile(history, 0.25))
-            q75 = float(quantile(history, 0.75))
-            prev_delta = history[-1]
-        else:
-            q25 = delta_seconds
-            q75 = delta_seconds
-            prev_delta = delta_seconds
-
-        burst = (prev_delta + EPSILON) / (delta_seconds + EPSILON)
-
-        enriched = dict(row)
-        enriched["robust_z"] = f"{z_score:.6f}"
-        enriched["robust_z_clipped"] = f"{clipped:.6f}"
-        enriched["prev_q25_seconds"] = f"{q25:.6f}"
-        enriched["prev_q75_seconds"] = f"{q75:.6f}"
-        enriched["burst_ratio"] = f"{burst:.6f}"
-        enriched_rows.append(enriched)
-
-        history.append(delta_seconds)
-        if len(history) > 5:
-            history.pop(0)
-
-    meta = {
-        "epsilon": EPSILON,
-        "mad_scale": MAD_SCALE,
-        "clip_range": list(CLIP_RANGE),
-        "global_median": global_median,
-        "global_mad": global_mad,
-        "group": "uid",
-        "fallback_users": fallback_users,
-        "user_stats": {
-            uid: {"median": stats[0], "mad": stats[1]}
-            for uid, stats in user_stats.items()
-        },
-    }
-
-    return enriched_rows, meta
 
 
 if __name__ == "__main__":  # pragma: no cover - CLI execution guard
