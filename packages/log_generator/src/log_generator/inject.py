@@ -8,7 +8,13 @@ from datetime import datetime, timedelta
 from typing import Any, Mapping, Sequence, TYPE_CHECKING
 
 if TYPE_CHECKING:  # pragma: no cover - imported for typing only
-    from .generate import ScenarioSpec, TimeAnomalySpec, _GeneratedEvent
+    from .generate import (
+        ScenarioSpec,
+        TimeAnomalySpec,
+        TokenReplayAnomalySpec,
+        UnauthAnomalySpec,
+        _GeneratedEvent,
+    )
 
 
 _ORDER_PATCHED = False
@@ -264,3 +270,175 @@ def _update_time_audit_entries(
             entry["op"] = event_op
         elif record_index == swap_index:
             entry["op"] = swap_op
+
+
+def apply_unauth_anomalies(
+    *,
+    events_by_user: Mapping[tuple[str, str], Sequence["_GeneratedEvent"]],
+    unauth_specs: Sequence["UnauthAnomalySpec"],
+    seed: int,
+    audit_entries: list[dict[str, Any]],
+) -> None:
+    """Inject unauthenticated access anomalies by mutating session identifiers."""
+
+    if not unauth_specs:
+        return
+
+    rng = random.Random(seed + 3)
+    for user_key in sorted(events_by_user):
+        for event in events_by_user[user_key]:
+            if getattr(event, "_unauth_injected", False):
+                continue
+            if not _requires_authentication(event):
+                continue
+
+            for unauth_spec in unauth_specs:
+                if unauth_spec.op is not None and unauth_spec.op != event.op_name:
+                    continue
+                if rng.random() > unauth_spec.probability:
+                    continue
+
+                original_session = event.session_id
+                mutated_session = _mutate_session_for_unauth(
+                    original_session, seed, event.index
+                )
+                event.session_id = mutated_session
+                setattr(event, "_unauth_injected", True)
+                audit_entries.append(
+                    _build_unauth_audit_entry(
+                        seed=seed,
+                        event=event,
+                        original_session=original_session,
+                        mutated_session=mutated_session,
+                    )
+                )
+                break
+
+
+def apply_token_replay_anomalies(
+    *,
+    events_by_user: Mapping[tuple[str, str], Sequence["_GeneratedEvent"]],
+    token_specs: Sequence["TokenReplayAnomalySpec"],
+    seed: int,
+    audit_entries: list[dict[str, Any]],
+) -> None:
+    """Inject token replay anomalies by reusing session identifiers across users."""
+
+    if not token_specs:
+        return
+
+    session_owners = _collect_session_owners(events_by_user)
+    if len(session_owners) < 2:
+        return
+
+    ordered_sessions = sorted(session_owners.items())
+    rng = random.Random(seed + 4)
+    for user_key in sorted(events_by_user):
+        for event in events_by_user[user_key]:
+            if getattr(event, "_unauth_injected", False):
+                continue
+            if getattr(event, "_token_replay_injected", False):
+                continue
+
+            for token_spec in token_specs:
+                if token_spec.op is not None and token_spec.op != event.op_name:
+                    continue
+                if rng.random() > token_spec.probability:
+                    continue
+
+                candidates = [
+                    candidate
+                    for candidate in ordered_sessions
+                    if candidate[0] != event.session_id and candidate[1] != event.uid
+                ]
+                if not candidates:
+                    continue
+
+                replay_session, owner_uid = rng.choice(candidates)
+                original_session = event.session_id
+                event.session_id = replay_session
+                setattr(event, "_token_replay_injected", True)
+                audit_entries.append(
+                    _build_token_replay_audit_entry(
+                        seed=seed,
+                        event=event,
+                        original_session=original_session,
+                        replayed_session=replay_session,
+                        owner_uid=owner_uid,
+                    )
+                )
+                break
+
+
+def _requires_authentication(event: "_GeneratedEvent") -> bool:
+    category = event.op_spec.op_category.strip().upper()
+    return category in {"UPDATE", "DELETE"}
+
+
+def _mutate_session_for_unauth(original: str, seed: int, index: int) -> str:
+    base = original if original else f"sess-{seed}"
+    return f"{base}-unauth-{seed}-{index}"
+
+
+def _build_unauth_audit_entry(
+    *,
+    seed: int,
+    event: "_GeneratedEvent",
+    original_session: str,
+    mutated_session: str,
+) -> dict[str, Any]:
+    reason = (
+        f"Forced AuthOK violation on record {event.index} ({event.op_name}) by "
+        f"replacing session '{original_session}' with '{mutated_session}'."
+    )
+    reason += f" AuthOK predicate failed for category {event.op_spec.op_category}."
+
+    return {
+        "type": "unauth",
+        "seed": seed,
+        "record_index": event.index,
+        "op": event.op_name,
+        "uid": event.uid,
+        "op_category": event.op_spec.op_category,
+        "session_original": original_session,
+        "session_mutated": mutated_session,
+        "auth_required": True,
+        "reason": reason,
+    }
+
+
+def _collect_session_owners(
+    events_by_user: Mapping[tuple[str, str], Sequence["_GeneratedEvent"]],
+) -> dict[str, str]:
+    owners: dict[str, str] = {}
+    for uid, session_id in events_by_user.keys():
+        owners.setdefault(session_id, uid)
+    return owners
+
+
+def _build_token_replay_audit_entry(
+    *,
+    seed: int,
+    event: "_GeneratedEvent",
+    original_session: str,
+    replayed_session: str,
+    owner_uid: str,
+) -> dict[str, Any]:
+    reason = (
+        f"Replayed session '{replayed_session}' originally issued to uid "
+        f"'{owner_uid}' on record {event.index}; uid '{event.uid}' now "
+        "presents the token, violating uid×session_id integrity."
+    )
+
+    return {
+        "type": "token_replay",
+        "seed": seed,
+        "record_index": event.index,
+        "op": event.op_name,
+        "uid": event.uid,
+        "op_category": event.op_spec.op_category,
+        "session_original": original_session,
+        "session_replayed": replayed_session,
+        "token_owner_uid": owner_uid,
+        "reason": reason,
+    }

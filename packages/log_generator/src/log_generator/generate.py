@@ -6,7 +6,7 @@ import csv
 import json
 import math
 import random
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Iterable, Sequence
@@ -68,6 +68,22 @@ class OrderAnomalySpec:
 
 
 @dataclass(frozen=True)
+class UnauthAnomalySpec:
+    """Configuration for unauthenticated access anomalies."""
+
+    probability: float
+    op: str | None
+
+
+@dataclass(frozen=True)
+class TokenReplayAnomalySpec:
+    """Configuration for session token replay anomalies."""
+
+    probability: float
+    op: str | None
+
+
+@dataclass(frozen=True)
 class UserSpec:
     """Configuration for a synthetic user/session timeline."""
 
@@ -87,6 +103,10 @@ class ScenarioSpec:
     operations: dict[str, OperationSpec]
     time_anomalies: Sequence[TimeAnomalySpec]
     order_anomalies: Sequence[OrderAnomalySpec]
+    unauth_anomalies: Sequence[UnauthAnomalySpec] = field(default_factory=tuple)
+    token_replay_anomalies: Sequence[TokenReplayAnomalySpec] = field(
+        default_factory=tuple
+    )
 
 
 @dataclass
@@ -127,7 +147,12 @@ def load_spec(path: Path) -> ScenarioSpec:
         raise ScenarioSpecError("scenario spec must list at least one user")
 
     operations = _parse_operations(data.get("ops", {}))
-    time_anomalies, order_anomalies = _parse_anomalies(data.get("anoms", []))
+    (
+        time_anomalies,
+        order_anomalies,
+        unauth_anomalies,
+        token_replay_anomalies,
+    ) = _parse_anomalies(data.get("anoms", []))
     return ScenarioSpec(
         algo_version=algo_version,
         t0=t0,
@@ -135,6 +160,8 @@ def load_spec(path: Path) -> ScenarioSpec:
         operations=operations,
         time_anomalies=time_anomalies,
         order_anomalies=order_anomalies,
+        unauth_anomalies=unauth_anomalies,
+        token_replay_anomalies=token_replay_anomalies,
     )
 
 
@@ -194,9 +221,16 @@ def _parse_operations(raw_ops: dict) -> dict[str, OperationSpec]:
 
 def _parse_anomalies(
     raw_anoms: Iterable[dict],
-) -> tuple[list[TimeAnomalySpec], list[OrderAnomalySpec]]:
+) -> tuple[
+    list[TimeAnomalySpec],
+    list[OrderAnomalySpec],
+    list[UnauthAnomalySpec],
+    list[TokenReplayAnomalySpec],
+]:
     time_anomalies: list[TimeAnomalySpec] = []
     order_anomalies: list[OrderAnomalySpec] = []
+    unauth_anomalies: list[UnauthAnomalySpec] = []
+    token_replay_anomalies: list[TokenReplayAnomalySpec] = []
 
     for entry in raw_anoms or []:
         if not isinstance(entry, dict):
@@ -247,10 +281,34 @@ def _parse_anomalies(
             order_anomalies.append(
                 OrderAnomalySpec(probability=probability, op=op_value)
             )
+        elif anomaly_type == "unauth":
+            probability = float(entry.get("p", 0.0))
+            if probability < 0 or probability > 1:
+                raise ScenarioSpecError(
+                    "unauth anomaly probability must be within [0, 1]"
+                )
+
+            op = entry.get("op")
+            op_value = str(op) if op is not None else None
+            unauth_anomalies.append(
+                UnauthAnomalySpec(probability=probability, op=op_value)
+            )
+        elif anomaly_type == "token_replay":
+            probability = float(entry.get("p", 0.0))
+            if probability < 0 or probability > 1:
+                raise ScenarioSpecError(
+                    "token_replay anomaly probability must be within [0, 1]"
+                )
+
+            op = entry.get("op")
+            op_value = str(op) if op is not None else None
+            token_replay_anomalies.append(
+                TokenReplayAnomalySpec(probability=probability, op=op_value)
+            )
         else:
             raise ScenarioSpecError(f"unsupported anomaly type: {anomaly_type}")
 
-    return time_anomalies, order_anomalies
+    return time_anomalies, order_anomalies, unauth_anomalies, token_replay_anomalies
 
 
 def _parse_transitions(
@@ -397,6 +455,18 @@ def generate_anom_records(
         audit_entries=audit_entries,
     )
     _apply_order_anomalies(events_by_user, spec, seed, audit_entries)
+    inject.apply_unauth_anomalies(
+        events_by_user=events_by_user,
+        unauth_specs=spec.unauth_anomalies,
+        seed=seed,
+        audit_entries=audit_entries,
+    )
+    inject.apply_token_replay_anomalies(
+        events_by_user=events_by_user,
+        token_specs=spec.token_replay_anomalies,
+        seed=seed,
+        audit_entries=audit_entries,
+    )
 
     events.sort(
         key=lambda event: (mutated_times.get(event.index, event.timestamp), event.index)
