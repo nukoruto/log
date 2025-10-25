@@ -18,7 +18,9 @@ pytest.importorskip("torch")
 from models_lstm import train  # noqa: E402
 
 
-def test_set_deterministic_mode_skips_cuda_when_unavailable(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_set_deterministic_mode_skips_cuda_when_unavailable(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """Ensure CUDA-specific seeding is skipped when CUDA is unavailable."""
 
     monkeypatch.setattr(train.torch.cuda, "is_available", lambda: False)
