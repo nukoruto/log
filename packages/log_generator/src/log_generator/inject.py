@@ -3,11 +3,15 @@
 from __future__ import annotations
 
 import random
+import sys
 from datetime import datetime, timedelta
 from typing import Any, Mapping, Sequence, TYPE_CHECKING
 
 if TYPE_CHECKING:  # pragma: no cover - imported for typing only
-    from .generate import TimeAnomalySpec, _GeneratedEvent
+    from .generate import ScenarioSpec, TimeAnomalySpec, _GeneratedEvent
+
+
+_ORDER_PATCHED = False
 
 
 def apply_time_anomalies(
@@ -27,6 +31,8 @@ def apply_time_anomalies(
     Returns:
         Mapping from record index to the mutated timestamp.
     """
+
+    _ensure_order_patch()
 
     mutated_times: dict[int, datetime] = {}
     if not time_specs:
@@ -135,3 +141,126 @@ def _build_time_audit_entry(
     if spec.delta is not None:
         entry["delta"] = spec.delta
     return entry
+
+
+def _ensure_order_patch() -> None:
+    """Ensure the order anomaly handler in ``generate`` uses the patched logic."""
+
+    global _ORDER_PATCHED
+    if _ORDER_PATCHED:
+        return
+
+    module = sys.modules.get("log_generator.generate")
+    if module is None:
+        return
+
+    module._apply_order_anomalies = _apply_order_anomalies  # type: ignore[attr-defined]
+    _ORDER_PATCHED = True
+
+
+def _apply_order_anomalies(
+    events_by_user: Mapping[tuple[str, str], Sequence["_GeneratedEvent"]],
+    spec: "ScenarioSpec",
+    seed: int,
+    audit_entries: list[dict[str, Any]],
+) -> None:
+    order_specs = getattr(spec, "order_anomalies", [])
+    if not order_specs:
+        return
+
+    rng = random.Random(seed + 2)
+    for order_spec in order_specs:
+        for user_events in events_by_user.values():
+            if len(user_events) < 2:
+                continue
+
+            idx = 0
+            while idx < len(user_events) - 1:
+                event = user_events[idx]
+                next_event = user_events[idx + 1]
+
+                if order_spec.op is not None and event.op_name != order_spec.op:
+                    idx += 1
+                    continue
+
+                if rng.random() > order_spec.probability:
+                    idx += 1
+                    continue
+
+                original_event_op = event.op_name
+                original_next_op = next_event.op_name
+
+                event.op_name, next_event.op_name = (
+                    next_event.op_name,
+                    event.op_name,
+                )
+                event.op_spec, next_event.op_spec = (
+                    next_event.op_spec,
+                    event.op_spec,
+                )
+
+                audit_entries.append(
+                    _build_order_audit_entry(
+                        seed=seed,
+                        first=event,
+                        second=next_event,
+                        op_before=original_event_op,
+                        swap_before=original_next_op,
+                    )
+                )
+                _update_time_audit_entries(
+                    audit_entries,
+                    event_index=event.index,
+                    event_op=event.op_name,
+                    swap_index=next_event.index,
+                    swap_op=next_event.op_name,
+                )
+
+                idx += 2
+
+
+def _build_order_audit_entry(
+    *,
+    seed: int,
+    first: "_GeneratedEvent",
+    second: "_GeneratedEvent",
+    op_before: str,
+    swap_before: str,
+) -> dict[str, Any]:
+    constraint = f"{op_before}->{swap_before}"
+    reason = (
+        "Swapped records "
+        f"{first.index}({op_before}) and {second.index}({swap_before}) to violate "
+        f"order constraint ℛ({constraint})."
+    )
+
+    return {
+        "type": "order",
+        "seed": seed,
+        "record_index": first.index,
+        "swap_with": second.index,
+        "op_before": op_before,
+        "op_after": first.op_name,
+        "swap_op_before": swap_before,
+        "swap_op_after": second.op_name,
+        "constraint": constraint,
+        "reason": reason,
+    }
+
+
+def _update_time_audit_entries(
+    audit_entries: list[dict[str, Any]],
+    *,
+    event_index: int,
+    event_op: str,
+    swap_index: int,
+    swap_op: str,
+) -> None:
+    for entry in audit_entries:
+        if entry.get("type") != "time":
+            continue
+        record_index = entry.get("record_index")
+        if record_index == event_index:
+            entry["op"] = event_op
+        elif record_index == swap_index:
+            entry["op"] = swap_op
