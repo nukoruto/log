@@ -6,6 +6,7 @@ import argparse
 from pathlib import Path
 from typing import Sequence
 
+from .score import run_score_command
 from .train import run_train_command
 
 
@@ -80,6 +81,36 @@ def _add_train_parser(
     parser.set_defaults(func=_handle_train)
 
 
+def _add_score_parser(
+    subparsers: argparse._SubParsersAction[argparse.ArgumentParser],
+) -> None:
+    parser = subparsers.add_parser(
+        "score",
+        help="Score contract CSV data using a trained LSTM checkpoint.",
+    )
+    parser.add_argument(
+        "--model",
+        type=Path,
+        required=True,
+        help="Path to the checkpoint file produced during training.",
+    )
+    parser.add_argument(
+        "--in",
+        dest="input_path",
+        type=Path,
+        required=True,
+        help="Path to the anomaly contract CSV to be scored.",
+    )
+    parser.add_argument(
+        "--out",
+        dest="output_path",
+        type=Path,
+        required=True,
+        help="Destination path for the scored CSV output.",
+    )
+    parser.set_defaults(func=_handle_score)
+
+
 def _handle_train(args: argparse.Namespace) -> int:
     run_train_command(
         normal=args.normal,
@@ -100,12 +131,22 @@ def _handle_train(args: argparse.Namespace) -> int:
     return 0
 
 
+def _handle_score(args: argparse.Namespace) -> int:
+    run_score_command(
+        model=args.model,
+        input_path=args.input_path,
+        output_path=args.output_path,
+    )
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="models-lstm", description="LSTM anomaly detection utilities."
     )
     subparsers = parser.add_subparsers(dest="command", required=True)
     _add_train_parser(subparsers)
+    _add_score_parser(subparsers)
     return parser
 
 
