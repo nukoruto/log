@@ -130,12 +130,23 @@ def sessionize_contract(
 
 
 def quantile(values: Sequence[float], q: float) -> float:
-    """Compute the q-quantile using linear interpolation."""
+    """Compute the *q*-quantile using NumPy's linear interpolation policy."""
 
     if not values:
         raise ValueError("Cannot compute quantile of empty values.")
-    sorted_values = sorted(values)
-    return _quantile_sorted(sorted_values, q)
+
+    try:
+        import numpy as np  # type: ignore[import-not-found]
+    except ModuleNotFoundError:
+        sorted_values = sorted(float(value) for value in values)
+        return _quantile_sorted(sorted_values, q)
+
+    array = np.asarray(list(values), dtype=float)
+    try:
+        result = np.quantile(array, q, method="linear")
+    except TypeError:
+        result = np.quantile(array, q, interpolation="linear")
+    return float(result)
 
 
 def _quantile_sorted(sorted_values: Sequence[float], q: float) -> float:
