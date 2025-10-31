@@ -3,10 +3,14 @@
 from __future__ import annotations
 
 import math
+import sys
 from collections import defaultdict
 from dataclasses import dataclass
-from typing import Iterable, Sequence, TypedDict
+from pathlib import Path
+from types import SimpleNamespace
+from typing import Iterable, Sequence, TextIO, TypedDict
 
+from .contract import StructuredLogger, _run_cli_handler
 from .sessionize import EPSILON, SESSION_COLUMNS, quantile
 
 
@@ -171,6 +175,64 @@ def _mad(values: Sequence[float], median: float) -> float:
     return _median(deviations)
 
 
+def deltify_cli(
+    sessioned_csv: str | Path | None,
+    *,
+    output: str | Path | None,
+    meta: str | Path | None,
+    seed: int | None,
+    stream: TextIO = sys.stdout,
+) -> int:
+    """`ds-contract deltify` を JSON ログ付きで実行するヘルパー。"""
+
+    logger = StructuredLogger(command="deltify", seed=seed, stream=stream)
+    if seed is None:
+        logger.log_error(
+            code="MISSING_SEED",
+            message="--seed is required for deterministic processing.",
+            hint="Invoke the command with an explicit --seed integer value.",
+        )
+        return 1
+
+    from . import cli as cli_module  # 遅延インポートで循環参照を避ける
+
+    cli_module._set_global_seed(seed)
+
+    if sessioned_csv is None:
+        logger.log_error(
+            code="ARGUMENT_ERROR",
+            message="sessioned_csv path is required.",
+            hint="Provide the sessionized CSV path as input (see --help).",
+        )
+        return 2
+
+    if output is None:
+        logger.log_error(
+            code="ARGUMENT_ERROR",
+            message="--out is required.",
+            hint="Specify the deltified CSV output path via --out <path> (see --help).",
+        )
+        return 2
+
+    if meta is None:
+        logger.log_error(
+            code="ARGUMENT_ERROR",
+            message="--meta is required.",
+            hint="Provide the Δt metadata JSON path via --meta <path> (see --help).",
+        )
+        return 2
+
+    args = SimpleNamespace(
+        command="deltify",
+        seed=seed,
+        sessioned_csv=str(Path(sessioned_csv)),
+        out=str(Path(output)),
+        meta=str(Path(meta)),
+    )
+
+    return _run_cli_handler("_handle_deltify", args, logger)
+
+
 __all__ = [
     "CLIP_RANGE",
     "DELTIFIED_COLUMNS",
@@ -178,4 +240,5 @@ __all__ = [
     "DeltifyResult",
     "MAD_SCALE",
     "deltify_session_rows",
+    "deltify_cli",
 ]
