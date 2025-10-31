@@ -25,6 +25,7 @@ from .data import (
     load_contract_dataframe,
     OpCategoryEncoder,
 )
+from .metrics import build_category_thresholds, save_metrics
 from .model import LSTMEventPredictor
 
 
@@ -366,27 +367,6 @@ def _binary_average_precision(labels: Sequence[int], scores: Sequence[float]) ->
     return float(area)
 
 
-def _compute_quantile(sorted_values: Sequence[float], quantile: float) -> float:
-    """Compute a linear-interpolated quantile from sorted data."""
-
-    if not sorted_values:
-        raise ValueError("sorted_values must not be empty")
-    if not 0.0 <= quantile <= 1.0:
-        raise ValueError("quantile must be within [0, 1]")
-    if len(sorted_values) == 1:
-        return float(sorted_values[0])
-
-    position = quantile * (len(sorted_values) - 1)
-    lower_index = int(math.floor(position))
-    upper_index = int(math.ceil(position))
-    if lower_index == upper_index:
-        return float(sorted_values[lower_index])
-    fraction = position - lower_index
-    lower_value = sorted_values[lower_index]
-    upper_value = sorted_values[upper_index]
-    return float(lower_value + (upper_value - lower_value) * fraction)
-
-
 def _average_over_classes(
     targets: Sequence[int],
     probabilities: Sequence[Sequence[float]],
@@ -415,27 +395,9 @@ def _build_thresholds(
     *,
     alpha: float = 0.05,
 ) -> Dict[str, Any]:
-    """Create per-category quantile thresholds for time residuals."""
+    """Proxy wrapper that emits linear-quantile thresholds for residuals."""
 
-    per_category: Dict[str, Dict[str, Optional[float]]] = {}
-    for category in categories:
-        values = residuals_by_category.get(category, [])
-        if values:
-            sorted_values = sorted(values)
-            tau_lo = _compute_quantile(sorted_values, alpha)
-            tau_hi = _compute_quantile(sorted_values, 1 - alpha)
-        else:
-            tau_lo = None
-            tau_hi = None
-        per_category[category] = {
-            "tau_lo": tau_lo,
-            "tau_hi": tau_hi,
-        }
-    return {
-        "alpha": alpha,
-        "method": "quantile",
-        "per_category": per_category,
-    }
+    return build_category_thresholds(residuals_by_category, categories, alpha=alpha)
 
 
 def _estimate_detection_delay(
@@ -810,9 +772,7 @@ def train_model(config: TrainingConfig) -> Dict[str, Any]:
     metrics.update(validation_metrics)
 
     metrics_path = output_dir / "metrics.json"
-    metrics_path.write_text(
-        json.dumps(metrics, indent=2, sort_keys=True), encoding="utf-8"
-    )
+    save_metrics(metrics_path, metrics)
 
     return metrics
 
