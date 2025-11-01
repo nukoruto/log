@@ -277,6 +277,8 @@ def test_train_cli_produces_checkpoint_and_metrics(tmp_path: Path) -> None:
     assert detection_delay >= 0.0
     thresholds = metrics.get("thresholds")
     assert isinstance(thresholds, dict)
+    assert thresholds.get("strategy") == "quantile"
+    assert thresholds.get("method") == "linear"
     assert thresholds.get("alpha") == pytest.approx(0.05)
     per_category = thresholds.get("per_category")
     assert isinstance(per_category, dict) and per_category

@@ -124,7 +124,8 @@ def test_score_outputs_expected_values(tmp_path: Path) -> None:
     metrics = {
         "thresholds": {
             "alpha": 0.05,
-            "method": "quantile",
+            "strategy": "quantile",
+            "method": "linear",
             "per_category": {
                 "click": {"tau_lo": 0.0, "tau_hi": 0.25},
                 "login": {"tau_lo": 0.0, "tau_hi": 0.25},
