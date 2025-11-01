@@ -6,16 +6,18 @@ import argparse
 import json
 import sys
 from pathlib import Path
-from typing import Any, Dict
+from typing import Any, Dict, Iterable, List
 
 from . import __version__
 from .fit import compute_file_sha256, run_fit, seed_everything
 from .plan import (
     AnomalyOptionError,
+    PlanInputError,
     PlanResult,
     parse_anomaly_options,
     run_plan,
 )
+from .schema import ScenarioSpecValidationError
 
 
 class ArgumentParserError(Exception):
@@ -91,12 +93,31 @@ def log_event(event: str, **payload: Any) -> None:
     print(json.dumps(record, ensure_ascii=False))
 
 
+def _normalize_argv(argv: Iterable[str] | None) -> List[str]:
+    if argv is None:
+        return list(sys.argv[1:])
+    return list(argv)
+
+
+def _determine_fit_error_code(exc: Exception) -> str:
+    if isinstance(exc, ValueError):
+        return "SCENARIO_DESIGN_CONTRACT_ERROR"
+    return "SCENARIO_DESIGN_FIT_ERROR"
+
+
+def _determine_plan_error_code(exc: Exception) -> str:
+    if isinstance(exc, (PlanInputError, ScenarioSpecValidationError, ValueError)):
+        return "SCENARIO_DESIGN_CONTRACT_ERROR"
+    return "SCENARIO_DESIGN_PLAN_ERROR"
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
+    argv_list = _normalize_argv(argv)
     try:
-        args = parser.parse_args(argv)
+        args = parser.parse_args(argv_list)
     except ArgumentParserError as exc:
-        command = argv[0] if argv else None
+        command = argv_list[0] if argv_list else None
         log_event(
             "error",
             command=command,
@@ -137,13 +158,14 @@ def main(argv: list[str] | None = None) -> int:
                 input_sha256=input_sha256,
             )
         except Exception as exc:  # noqa: BLE001 - propagate as CLI failure
+            error_code = _determine_fit_error_code(exc)
             log_event(
                 "error",
                 command="fit",
                 input=str(input_path),
                 output=str(output_path),
                 message=str(exc),
-                error_code="SCENARIO_DESIGN_FIT_ERROR",
+                error_code=error_code,
                 seed=seed,
                 input_sha256=input_sha256,
             )
@@ -203,13 +225,14 @@ def main(argv: list[str] | None = None) -> int:
                 anomalies=anomalies,
             )
         except Exception as exc:  # noqa: BLE001 - propagate as CLI failure
+            error_code = _determine_plan_error_code(exc)
             log_event(
                 "error",
                 command="plan",
                 input=str(stats_path),
                 output=str(output_path),
                 message=str(exc),
-                error_code="SCENARIO_DESIGN_PLAN_ERROR",
+                error_code=error_code,
                 seed=seed,
                 input_sha256=stats_sha256,
             )

@@ -135,7 +135,7 @@ def test_fit_rejects_unknown_operations(tmp_path: Path) -> None:
     assert stdout_lines[0]["input_sha256"]
     assert stdout_lines[-1]["event"] == "error"
     assert stdout_lines[-1]["seed"] == seed
-    assert stdout_lines[-1]["error_code"] == "SCENARIO_DESIGN_FIT_ERROR"
+    assert stdout_lines[-1]["error_code"] == "SCENARIO_DESIGN_CONTRACT_ERROR"
     assert "unknown op" in stdout_lines[-1]["message"].lower()
     assert stdout_lines[-1]["input_sha256"]
     assert not stats_path.exists()
@@ -167,7 +167,7 @@ def test_fit_rejects_non_finite_delta_t(tmp_path: Path, delta_value: str) -> Non
     stdout_lines = parse_json_lines(result.stdout)
     assert stdout_lines[0]["event"] == "start"
     assert stdout_lines[-1]["event"] == "error"
-    assert stdout_lines[-1]["error_code"] == "SCENARIO_DESIGN_FIT_ERROR"
+    assert stdout_lines[-1]["error_code"] == "SCENARIO_DESIGN_CONTRACT_ERROR"
     message = stdout_lines[-1]["message"].lower()
     assert "delta_t" in message
     assert "finite positive" in message
