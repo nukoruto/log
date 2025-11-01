@@ -3,12 +3,15 @@
 from __future__ import annotations
 
 import math
+import sys
 from collections import defaultdict
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Iterable, Sequence, TypedDict, cast
+from pathlib import Path
+from types import SimpleNamespace
+from typing import Iterable, Sequence, TextIO, TypedDict, cast
 
-from .contract import CONTRACT_COLUMNS
+from .contract import CONTRACT_COLUMNS, StructuredLogger, _run_cli_handler
 
 EPSILON: float = 1e-3
 SESSION_COLUMNS: list[str] = list(CONTRACT_COLUMNS) + [
@@ -165,6 +168,64 @@ def _quantile_sorted(sorted_values: Sequence[float], q: float) -> float:
     upper_value = float(sorted_values[upper_index])
     weight = position - lower_index
     return lower_value * (1 - weight) + upper_value * weight
+
+
+def sessionize_cli(
+    contract_csv: str | Path | None,
+    *,
+    output: str | Path | None,
+    meta: str | Path | None,
+    seed: int | None,
+    stream: TextIO = sys.stdout,
+) -> int:
+    """`ds-contract sessionize` をヘルパー経由で実行する。"""
+
+    logger = StructuredLogger(command="sessionize", seed=seed, stream=stream)
+    if seed is None:
+        logger.log_error(
+            code="MISSING_SEED",
+            message="--seed is required for deterministic processing.",
+            hint="Invoke the command with an explicit --seed integer value.",
+        )
+        return 1
+
+    from . import cli as cli_module  # 遅延インポートで循環参照を避ける
+
+    cli_module._set_global_seed(seed)
+
+    if contract_csv is None:
+        logger.log_error(
+            code="ARGUMENT_ERROR",
+            message="contract_csv path is required.",
+            hint="Provide the validated contract CSV path as input (see --help).",
+        )
+        return 2
+
+    if output is None:
+        logger.log_error(
+            code="ARGUMENT_ERROR",
+            message="--out is required.",
+            hint="Specify the sessionized CSV output path via --out <path> (see --help).",
+        )
+        return 2
+
+    if meta is None:
+        logger.log_error(
+            code="ARGUMENT_ERROR",
+            message="--meta is required.",
+            hint="Provide the session metadata JSON path via --meta <path> (see --help).",
+        )
+        return 2
+
+    args = SimpleNamespace(
+        command="sessionize",
+        seed=seed,
+        contract_csv=str(Path(contract_csv)),
+        out=str(Path(output)),
+        meta=str(Path(meta)),
+    )
+
+    return _run_cli_handler("_handle_sessionize", args, logger)
 
 
 def _collect_log_deltas(
