@@ -435,8 +435,9 @@ def write_run_meta(path: Path, spec: ScenarioSpec, seed: int, spec_sha256: str) 
         "algo_version": spec.algo_version,
         "spec_sha256": spec_sha256,
     }
+    serialized = json.dumps(payload, sort_keys=True, separators=(",", ":")) + "\n"
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(payload, sort_keys=True, indent=2))
+    path.write_text(serialized, encoding="utf-8")
 
 
 def generate_anom_records(
