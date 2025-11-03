@@ -15,7 +15,7 @@ if str(SRC_ROOT) not in sys.path:
 pytest.importorskip("numpy")
 pytest.importorskip("torch")
 
-from models_lstm import train  # noqa: E402
+from models_lstm import utils as utils_module  # noqa: E402
 
 
 def test_set_deterministic_mode_skips_cuda_when_unavailable(
@@ -23,15 +23,15 @@ def test_set_deterministic_mode_skips_cuda_when_unavailable(
 ) -> None:
     """Ensure CUDA-specific seeding is skipped when CUDA is unavailable."""
 
-    monkeypatch.setattr(train.torch.cuda, "is_available", lambda: False)
+    monkeypatch.setattr(utils_module.torch.cuda, "is_available", lambda: False)
 
     def _manual_seed_all(_: int) -> None:
         raise AssertionError("CUDA seeding should be skipped when CUDA is unavailable")
 
-    monkeypatch.setattr(train.torch.cuda, "manual_seed_all", _manual_seed_all)
+    monkeypatch.setattr(utils_module.torch.cuda, "manual_seed_all", _manual_seed_all)
 
     # Simulate cudnn being unavailable to guard attribute access.
-    cudnn_module = train.torch.backends.cudnn
+    cudnn_module = utils_module.torch.backends.cudnn
     monkeypatch.setattr(cudnn_module, "is_available", lambda: False)
 
-    train.set_deterministic_mode(123)
+    utils_module.set_deterministic_mode(123)

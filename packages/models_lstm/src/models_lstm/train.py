@@ -4,15 +4,11 @@ from __future__ import annotations
 
 import json
 import math
-import os
-import random
 from collections import defaultdict
 from dataclasses import asdict, dataclass
 from hashlib import sha256
 from pathlib import Path
 from typing import Any, Callable, DefaultDict, Dict, List, Optional, Sequence, Tuple
-
-import numpy  # type: ignore[import-not-found]
 
 import torch  # type: ignore[import-not-found]
 from torch import Tensor, nn  # type: ignore[attr-defined]
@@ -27,6 +23,7 @@ from .data import (
 )
 from .metrics import build_category_thresholds, save_metrics
 from .model import LSTMEventPredictor
+from .utils import resolve_device, set_deterministic_mode
 
 
 @dataclass
@@ -143,43 +140,6 @@ class AnomalyDetectorModel(nn.Module):
         embeddings = self.embedding(op_indices)
         features = torch.cat([embeddings, z_inputs.unsqueeze(-1)], dim=-1)
         return self.predictor(features)
-
-
-def set_deterministic_mode(seed: int) -> None:
-    """Seed all major RNGs for deterministic execution."""
-
-    random.seed(seed)
-    numpy.random.seed(seed)
-    torch.manual_seed(seed)
-    if torch.cuda.is_available():
-        torch.cuda.manual_seed_all(seed)
-        if torch.backends.cudnn.is_available():
-            torch.backends.cudnn.benchmark = False
-            torch.backends.cudnn.deterministic = True
-    try:
-        torch.use_deterministic_algorithms(True)
-    except RuntimeError:  # pragma: no cover - deterministic mode may be unavailable
-        pass
-
-
-def _resolve_device() -> torch.device:
-    mode = os.environ.get("GPU_MODE", "cpu").lower()
-    if mode == "cpu" or not torch.cuda.is_available():
-        return torch.device("cpu")
-
-    target_index: int | None = None
-    for index in range(torch.cuda.device_count()):
-        name = torch.cuda.get_device_name(index).lower()
-        if mode in name:
-            target_index = index
-            break
-
-    if target_index is None:
-        if torch.cuda.is_available():
-            target_index = 0
-        else:
-            return torch.device("cpu")
-    return torch.device(f"cuda:{target_index}")
 
 
 def _compute_file_sha256(path: Path) -> str:
@@ -636,7 +596,7 @@ def train_model(config: TrainingConfig) -> Dict[str, Any]:
     output_dir.mkdir(parents=True, exist_ok=True)
 
     set_deterministic_mode(config.seed)
-    device = _resolve_device()
+    device = resolve_device()
 
     train_records = load_contract_dataframe(config.normal_path)
     train_sequences, encoder, train_stats = build_sequence_examples(
