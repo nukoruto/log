@@ -13,13 +13,8 @@ from torch import Tensor  # type: ignore[attr-defined]
 
 from . import data as data_module
 from .data import ContractRecord, load_contract_dataframe
-from .train import (
-    AnomalyDetectorModel,
-    _compute_file_sha256,
-    _resolve_device,
-    log_event,
-    set_deterministic_mode,
-)
+from .train import AnomalyDetectorModel, _compute_file_sha256, log_event
+from .utils import resolve_device, set_deterministic_mode
 
 
 SCORE_COLUMNS: Sequence[str] = (
@@ -323,7 +318,7 @@ def score_dataset(
         str(category): index for index, category in enumerate(checkpoint.encoder_vocab)
     }
 
-    device = _resolve_device()
+    device = resolve_device()
     model = _build_model(checkpoint).to(device)
 
     _score_records(
