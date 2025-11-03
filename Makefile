@@ -11,6 +11,6 @@ test:
 	pytest -q
 
 e2e:
-	bash scripts/quickstart.sh
+	PYTHONPATH=packages/ds_contract/src bash scripts/quickstart.sh
 
 all: lint test e2e
