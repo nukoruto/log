@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import csv
+import json
 import sys
 from pathlib import Path
 from datetime import datetime, timedelta, timezone
@@ -10,6 +12,8 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
+from ds_contract import cli
+from ds_contract.contract import CONTRACT_COLUMNS
 from ds_contract.sessionize import (
     SESSION_COLUMNS,
     SessionizationResult,
@@ -82,3 +86,63 @@ def test_sessionize_meta_contains_bins(base_rows: list[dict[str, str]]) -> None:
     assert bins["count"] == histogram["bin_count"]
     assert "fd_width" in bins
     assert "min_log" in bins and "max_log" in bins
+
+
+def test_sessionize_cli_rejects_descending_contract(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    contract_path = tmp_path / "contract.csv"
+    meta_path = tmp_path / "meta_session.json"
+
+    rows = [
+        {
+            "timestamp_utc": "2024-01-01T00:02:00+00:00",
+            "uid": "user-1",
+            "session_id": "raw",
+            "method": "GET",
+            "path": "/index",
+            "referer": "-",
+            "user_agent": "ua",
+            "ip": "192.0.2.1",
+            "op_category": "view",
+        },
+        {
+            "timestamp_utc": "2024-01-01T00:01:00+00:00",
+            "uid": "user-2",
+            "session_id": "raw",
+            "method": "POST",
+            "path": "/submit",
+            "referer": "-",
+            "user_agent": "ua",
+            "ip": "192.0.2.2",
+            "op_category": "write",
+        },
+    ]
+
+    with contract_path.open("w", newline="", encoding="utf-8") as handle:
+        writer = csv.DictWriter(handle, fieldnames=list(CONTRACT_COLUMNS))
+        writer.writeheader()
+        writer.writerows(rows)
+
+    exit_code = cli.main(
+        [
+            "--seed",
+            "7",
+            "sessionize",
+            str(contract_path),
+            "--out",
+            str(tmp_path / "sessioned.csv"),
+            "--meta",
+            str(meta_path),
+        ]
+    )
+
+    assert exit_code == 1
+    logs = [
+        json.loads(line)
+        for line in capsys.readouterr().out.splitlines()
+        if line.strip()
+    ]
+    assert logs[-1]["event"] == "error"
+    assert logs[-1]["code"] == "REVERSED_ORDER"
+    assert "timestamp_utc" in str(logs[-1]["message"]).lower()
