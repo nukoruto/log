@@ -290,6 +290,7 @@ def score_dataset(
     model_path: Path,
     input_path: Path,
     output_path: Path,
+    seed: int,
     weight_cls: float = DEFAULT_WEIGHT_CLS,
     weight_time: float = DEFAULT_WEIGHT_TIME,
     checkpoint: _Checkpoint | None = None,
@@ -311,7 +312,6 @@ def score_dataset(
     thresholds_path = model_path.parent / "metrics.json"
     thresholds = _load_thresholds(thresholds_path)
 
-    seed = int(checkpoint.config.get("seed", 0)) if "seed" in checkpoint.config else 0
     set_deterministic_mode(seed)
 
     category_to_index = {
@@ -340,6 +340,9 @@ def run_score_command(
     model: Path,
     input_path: Path,
     output_path: Path,
+    seed: int,
+    weight_cls: float = DEFAULT_WEIGHT_CLS,
+    weight_time: float = DEFAULT_WEIGHT_TIME,
 ) -> List[Dict[str, Any]]:
     """Entry point used by the CLI to execute scoring."""
 
@@ -357,11 +360,8 @@ def run_score_command(
         model_sha = None
 
     checkpoint: _Checkpoint | None = None
-    seed: int = 0
     try:
         checkpoint = _load_checkpoint(model)
-        if "seed" in checkpoint.config:
-            seed = int(checkpoint.config.get("seed", 0))
     except Exception as error:
         payload = {
             "model": str(model),
@@ -370,6 +370,8 @@ def run_score_command(
             "input_sha256": input_sha,
             "model_sha256": model_sha,
             "seed": seed,
+            "weight_cls": weight_cls,
+            "weight_time": weight_time,
         }
         log_event("score_start", payload={"status": "started", **payload})
         log_event(
@@ -390,6 +392,8 @@ def run_score_command(
         "input_sha256": input_sha,
         "model_sha256": model_sha,
         "seed": seed,
+        "weight_cls": weight_cls,
+        "weight_time": weight_time,
     }
 
     log_event("score_start", payload={"status": "started", **payload})
@@ -398,8 +402,9 @@ def run_score_command(
             model_path=model,
             input_path=input_path,
             output_path=output_path,
-            weight_cls=DEFAULT_WEIGHT_CLS,
-            weight_time=DEFAULT_WEIGHT_TIME,
+            seed=seed,
+            weight_cls=weight_cls,
+            weight_time=weight_time,
             checkpoint=checkpoint,
         )
     except Exception as error:
