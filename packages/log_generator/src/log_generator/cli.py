@@ -40,6 +40,7 @@ def cli() -> None:
 @click.option(
     "--spec", "spec_path", type=click.Path(exists=True, path_type=Path), required=True
 )
+@click.option("--t0", "t0_override", type=str, required=False)
 @click.option("--seed", type=int, required=True)
 @click.option("--normal", "normal_path", type=click.Path(path_type=Path), required=True)
 @click.option("--anom", "anom_path", type=click.Path(path_type=Path), required=True)
@@ -47,6 +48,7 @@ def cli() -> None:
 @click.option("--meta", "meta_path", type=click.Path(path_type=Path), required=True)
 def run(
     spec_path: Path,
+    t0_override: str | None,
     seed: int,
     normal_path: Path,
     anom_path: Path,
@@ -61,7 +63,7 @@ def run(
     )
 
     try:
-        spec = load_spec(spec_path)
+        spec = load_spec(spec_path, override_t0=t0_override)
         normal_records = generate_normal_records(spec, seed)
         anom_records, audit_entries = generate_anom_records(spec, seed)
         write_contract_csv(normal_path, normal_records)

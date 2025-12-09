@@ -9,7 +9,7 @@ import random
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any, Iterable, Sequence
+from typing import Any, Iterable, Mapping, Sequence
 
 from . import inject
 
@@ -46,6 +46,8 @@ class OperationSpec:
     op_category: str
     transitions: Sequence[Transition]
     cdf_points: Sequence[tuple[float, float]]
+    dt_mu: float | None = None
+    dt_sigma: float | None = None
 
 
 @dataclass(frozen=True)
@@ -101,8 +103,9 @@ class ScenarioSpec:
     t0: datetime
     users: Sequence[UserSpec]
     operations: dict[str, OperationSpec]
-    time_anomalies: Sequence[TimeAnomalySpec]
-    order_anomalies: Sequence[OrderAnomalySpec]
+    pi: Sequence[Transition] | None = None
+    time_anomalies: Sequence[TimeAnomalySpec] = field(default_factory=tuple)
+    order_anomalies: Sequence[OrderAnomalySpec] = field(default_factory=tuple)
     unauth_anomalies: Sequence[UnauthAnomalySpec] = field(default_factory=tuple)
     token_replay_anomalies: Sequence[TokenReplayAnomalySpec] = field(
         default_factory=tuple
@@ -127,7 +130,7 @@ class ScenarioSpecError(ValueError):
     """Raised when the scenario specification violates the contract."""
 
 
-def load_spec(path: Path) -> ScenarioSpec:
+def load_spec(path: Path, *, override_t0: str | None = None) -> ScenarioSpec:
     """Load and validate a scenario specification from JSON."""
 
     try:
@@ -135,29 +138,123 @@ def load_spec(path: Path) -> ScenarioSpec:
     except json.JSONDecodeError as exc:  # pragma: no cover - sanity fallback
         raise ScenarioSpecError(f"scenario_spec.json is not valid JSON: {exc}") from exc
 
-    if "algo_version" not in data:
-        raise ScenarioSpecError("scenario spec must provide 'algo_version'")
-    algo_version = str(data["algo_version"])
+    algo_version = str(data.get("algo_version", "1.0.0"))
 
-    t0_raw = data.get("t0", "1970-01-01T00:00:00Z")
+    t0_raw = override_t0 if override_t0 is not None else data.get("t0", "1970-01-01T00:00:00Z")
     t0 = _parse_utc_timestamp(t0_raw)
 
-    users = [_parse_user_spec(item) for item in data.get("users", [])]
-    if not users:
-        raise ScenarioSpecError("scenario spec must list at least one user")
+    if "ops" in data:
+        users = [_parse_user_spec(item) for item in data.get("users", [])]
+        if not users:
+            raise ScenarioSpecError("scenario spec must list at least one user")
 
-    operations = _parse_operations(data.get("ops", {}))
+        operations = _parse_operations(data.get("ops", {}))
+        (
+            time_anomalies,
+            order_anomalies,
+            unauth_anomalies,
+            token_replay_anomalies,
+        ) = _parse_anomalies(data.get("anoms", []))
+        return ScenarioSpec(
+            algo_version=algo_version,
+            t0=t0,
+            users=users,
+            operations=operations,
+            pi=None,
+            time_anomalies=time_anomalies,
+            order_anomalies=order_anomalies,
+            unauth_anomalies=unauth_anomalies,
+            token_replay_anomalies=token_replay_anomalies,
+        )
+
+    return _load_markov_spec(data, algo_version, t0)
+
+
+def _load_markov_spec(data: Mapping[str, Any], algo_version: str, t0: datetime) -> ScenarioSpec:
+    if "length" not in data or "users" not in data:
+        raise ScenarioSpecError("scenario spec must include 'length' and 'users'")
+
+    length = int(data["length"])
+    users_count = int(data["users"])
+    if length <= 0:
+        raise ScenarioSpecError("scenario spec length must be positive")
+    if users_count <= 0:
+        raise ScenarioSpecError("scenario spec users must be positive")
+
+    pi_raw = data.get("pi")
+    A_raw = data.get("A")
+    dt_raw = data.get("dt")
+    if not isinstance(pi_raw, Mapping):
+        raise ScenarioSpecError("scenario spec must define initial distribution 'pi'")
+    if not isinstance(A_raw, Mapping):
+        raise ScenarioSpecError("scenario spec must define transition matrix 'A'")
+    if not isinstance(dt_raw, Mapping):
+        raise ScenarioSpecError("scenario spec must define 'dt' parameters")
+
+    lognorm = dt_raw.get("lognorm") if isinstance(dt_raw, Mapping) else None
+    if not isinstance(lognorm, Mapping):
+        raise ScenarioSpecError("scenario spec must define dt.lognorm parameters")
+    mu_raw = lognorm.get("mu")
+    sigma_raw = lognorm.get("sigma")
+    if not isinstance(mu_raw, Mapping) or not isinstance(sigma_raw, Mapping):
+        raise ScenarioSpecError("scenario spec dt.lognorm must include 'mu' and 'sigma'")
+
+    pi_distribution = _parse_probability_mapping(pi_raw, "pi")
+    categories = sorted(
+        set(pi_raw.keys()) | set(A_raw.keys()) | set(mu_raw.keys()) | set(sigma_raw.keys())
+    )
+
+    operations: dict[str, OperationSpec] = {}
+    for category in categories:
+        if category not in A_raw:
+            raise ScenarioSpecError(f"transition matrix missing row for '{category}'")
+        transitions = _parse_probability_mapping(A_raw[category], f"A[{category}]")
+        if category not in mu_raw or category not in sigma_raw:
+            raise ScenarioSpecError(
+                f"dt.lognorm parameters missing for category '{category}'"
+            )
+        mu_value = float(mu_raw[category])
+        sigma_value = float(sigma_raw[category])
+        if sigma_value <= 0:
+            raise ScenarioSpecError("dt.lognorm sigma values must be positive")
+
+        operations[category] = OperationSpec(
+            method="GET",
+            path=f"/{category.lower()}",
+            referer="-",
+            user_agent="log-generator/1.0",
+            ip="127.0.0.1",
+            op_category=category,
+            transitions=transitions,
+            cdf_points=(),
+            dt_mu=mu_value,
+            dt_sigma=sigma_value,
+        )
+
+    steps = _distribute_steps(length, users_count)
+    users = [
+        UserSpec(
+            uid=f"user-{index+1}",
+            session_id=f"sess-{index+1}",
+            initial_op="",
+            steps=steps[index],
+        )
+        for index in range(users_count)
+    ]
+
     (
         time_anomalies,
         order_anomalies,
         unauth_anomalies,
         token_replay_anomalies,
     ) = _parse_anomalies(data.get("anoms", []))
+
     return ScenarioSpec(
         algo_version=algo_version,
         t0=t0,
         users=users,
         operations=operations,
+        pi=pi_distribution,
         time_anomalies=time_anomalies,
         order_anomalies=order_anomalies,
         unauth_anomalies=unauth_anomalies,
@@ -177,6 +274,8 @@ def _parse_utc_timestamp(raw: str) -> datetime:
 
     if timestamp.tzinfo is None:
         raise ScenarioSpecError("timestamps must include UTC offset")
+    if timestamp.utcoffset() != timezone.utc.utcoffset(None):
+        raise ScenarioSpecError("timestamps must be in UTC (offset +00:00)")
     return timestamp.astimezone(timezone.utc)
 
 
@@ -215,8 +314,32 @@ def _parse_operations(raw_ops: dict) -> dict[str, OperationSpec]:
             op_category=str(op_data.get("op_category", "")),
             transitions=transitions,
             cdf_points=cdf_points,
+            dt_mu=None,
+            dt_sigma=None,
         )
     return operations
+
+
+def _parse_probability_mapping(
+    probabilities: Mapping[str, Any], context: str
+) -> list[Transition]:
+    if not probabilities:
+        raise ScenarioSpecError(f"{context} must define at least one target")
+
+    transitions: list[Transition] = []
+    total_prob = 0.0
+    for op, probability in probabilities.items():
+        prob_value = float(probability)
+        if prob_value < 0:
+            raise ScenarioSpecError(
+                f"probability in {context} must be non-negative for '{op}'"
+            )
+        total_prob += prob_value
+        transitions.append(Transition(op=str(op), prob=prob_value))
+
+    if total_prob <= 0:
+        raise ScenarioSpecError(f"probabilities in {context} must sum to >0")
+    return transitions
 
 
 def _parse_anomalies(
@@ -391,11 +514,13 @@ def _generate_events(spec: ScenarioSpec, seed: int) -> list[_GeneratedEvent]:
     record_index = 0
     for user in spec.users:
         current_time = spec.t0
-        current_op = user.initial_op
+        current_op = _sample_initial_operation(rng, spec, user.initial_op)
+        if not current_op:
+            raise ScenarioSpecError("user initial operation could not be determined")
         user_step = 0
         for _ in range(user.steps):
             op_spec = _resolve_operation(spec, current_op)
-            dt_seconds = _sample_dt_seconds(rng, op_spec.cdf_points)
+            dt_seconds = _sample_dt_seconds(rng, op_spec)
             next_op = _sample_next_operation(rng, op_spec.transitions)
             events.append(
                 _GeneratedEvent(
@@ -491,21 +616,28 @@ def write_audit_log(path: Path, entries: Sequence[dict[str, Any]]) -> None:
 
 
 def _sample_dt_seconds(
-    rng: random.Random, cdf_points: Sequence[tuple[float, float]]
+    rng: random.Random, op_spec: OperationSpec
 ) -> float:
-    u = rng.random()
-    previous_p, previous_seconds = cdf_points[0]
-    if u <= previous_p:
-        return previous_seconds
+    if op_spec.cdf_points:
+        cdf_points = op_spec.cdf_points
+        u = rng.random()
+        previous_p, previous_seconds = cdf_points[0]
+        if u <= previous_p:
+            return previous_seconds
 
-    for probability, seconds in cdf_points[1:]:
-        if u <= probability:
-            if probability == previous_p:
-                return seconds
-            ratio = (u - previous_p) / (probability - previous_p)
-            return previous_seconds + ratio * (seconds - previous_seconds)
-        previous_p, previous_seconds = probability, seconds
-    return cdf_points[-1][1]
+        for probability, seconds in cdf_points[1:]:
+            if u <= probability:
+                if probability == previous_p:
+                    return seconds
+                ratio = (u - previous_p) / (probability - previous_p)
+                return previous_seconds + ratio * (seconds - previous_seconds)
+            previous_p, previous_seconds = probability, seconds
+        return cdf_points[-1][1]
+
+    if op_spec.dt_mu is not None and op_spec.dt_sigma is not None:
+        return rng.lognormvariate(op_spec.dt_mu, op_spec.dt_sigma)
+
+    raise ScenarioSpecError("operation is missing Δt distribution parameters")
 
 
 def _sample_next_operation(
@@ -519,6 +651,22 @@ def _sample_next_operation(
         if threshold <= cumulative:
             return item.op
     return transitions[-1].op
+
+
+def _sample_initial_operation(
+    rng: random.Random, spec: ScenarioSpec, fallback: str
+) -> str:
+    if spec.pi:
+        return _sample_next_operation(rng, spec.pi)
+    return fallback
+
+
+def _distribute_steps(length: int, users: int) -> list[int]:
+    base, remainder = divmod(length, users)
+    steps = [base for _ in range(users)]
+    for index in range(remainder):
+        steps[index] += 1
+    return steps
 
 
 def _group_events_by_user(

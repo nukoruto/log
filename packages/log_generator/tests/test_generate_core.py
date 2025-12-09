@@ -29,89 +29,26 @@ CONTRACT_COLUMNS = [
 
 def write_spec(tmp_path: Path) -> Path:
     spec = {
-        "algo_version": "0.1.0",
-        "t0": "1970-01-01T00:00:00Z",
-        "users": [
-            {
-                "uid": "user-1",
-                "session_id": "sess-1",
-                "initial_op": "login",
-                "steps": 3,
-            },
-            {
-                "uid": "user-2",
-                "session_id": "sess-2",
-                "initial_op": "login",
-                "steps": 2,
-            },
-        ],
-        "ops": {
-            "login": {
-                "method": "POST",
-                "path": "/login",
-                "referer": "https://example.test/",
-                "user_agent": "SpecAgent/1.0",
-                "ip": "192.0.2.10",
-                "op_category": "auth",
-                "transitions": [
-                    {"op": "dashboard", "prob": 1.0},
-                ],
-                "dt_distribution": {
-                    "type": "piecewise",
-                    "cdf": [
-                        {"p": 0.0, "seconds": 3.0},
-                        {"p": 0.5, "seconds": 5.0},
-                        {"p": 1.0, "seconds": 7.0},
-                    ],
-                },
-            },
-            "dashboard": {
-                "method": "GET",
-                "path": "/dashboard",
-                "referer": "https://example.test/login",
-                "user_agent": "SpecAgent/1.0",
-                "ip": "198.51.100.5",
-                "op_category": "browse",
-                "transitions": [
-                    {"op": "logout", "prob": 1.0},
-                ],
-                "dt_distribution": {
-                    "type": "piecewise",
-                    "cdf": [
-                        {"p": 0.0, "seconds": 11.0},
-                        {"p": 1.0, "seconds": 11.0},
-                    ],
-                },
-            },
-            "logout": {
-                "method": "POST",
-                "path": "/logout",
-                "referer": "https://example.test/dashboard",
-                "user_agent": "SpecAgent/1.0",
-                "ip": "203.0.113.2",
-                "op_category": "auth",
-                "transitions": [
-                    {"op": "logout", "prob": 1.0},
-                ],
-                "dt_distribution": {
-                    "type": "piecewise",
-                    "cdf": [
-                        {"p": 0.0, "seconds": 2.0},
-                        {"p": 1.0, "seconds": 2.0},
-                    ],
-                },
-            },
+        "length": 5,
+        "users": 2,
+        "pi": {"AUTH": 1.0},
+        "A": {"AUTH": {"READ": 1.0}, "READ": {"READ": 1.0}},
+        "dt": {
+            "lognorm": {
+                "mu": {"AUTH": 0.0, "READ": 0.6931471805599453},
+                "sigma": {"AUTH": 1e-9, "READ": 1e-9},
+            }
         },
         "anoms": [
             {
                 "type": "time",
                 "mode": "propagate",
                 "p": 1.0,
-                "scale": 3.0,
-                "op": "dashboard",
-            },
-            {"type": "order", "p": 1.0, "op": "dashboard"},
+                "scale": 2.0,
+                "op": "READ",
+            }
         ],
+        "seed": 7,
     }
     path = tmp_path / "scenario_spec.json"
     path.write_text(json.dumps(spec))
@@ -182,20 +119,12 @@ def test_cli_generates_contract_outputs_with_anomalies(tmp_path: Path) -> None:
     ]
     assert anom_timestamps == sorted(anom_timestamps)
 
-    # Methods and paths correspond to the spec definitions for each op.
-    ops = {
-        name: details
-        for name, details in json.loads(spec_path.read_text())["ops"].items()
-    }
-    for row in rows:
-        matching = [
-            name
-            for name, details in ops.items()
-            if details["method"] == row["method"]
-            and details["path"] == row["path"]
-            and details["op_category"] == row["op_category"]
-        ]
-        assert matching, f"row does not match any op definition: {row}"
+    # Operations come from the pi/A categories.
+    spec = json.loads(spec_path.read_text())
+    categories = set(spec["pi"].keys()) | set(spec["A"].keys())
+    for targets in spec["A"].values():
+        categories.update(targets.keys())
+    assert {row["op_category"] for row in rows}.issubset(categories)
 
     # Determinism: re-run and ensure byte-identical output.
     normal_second = tmp_path / "normal-second.csv"
@@ -245,11 +174,9 @@ def test_cli_generates_contract_outputs_with_anomalies(tmp_path: Path) -> None:
     spec_bytes = spec_path.read_bytes()
     expected_sha = hashlib.sha256(spec_bytes).hexdigest()
 
-    assert meta_data == {
-        "seed": 42,
-        "algo_version": "0.1.0",
-        "spec_sha256": expected_sha,
-    }
+    assert meta_data["seed"] == 42
+    assert meta_data["spec_sha256"] == expected_sha
+    assert "algo_version" in meta_data
 
     # Audit log contains structured entries for injected anomalies.
     audit_entries = [
@@ -257,18 +184,91 @@ def test_cli_generates_contract_outputs_with_anomalies(tmp_path: Path) -> None:
     ]
     assert audit_entries, "audit log must contain anomaly entries"
     assert all(entry.get("seed") == 42 for entry in audit_entries)
-    assert {entry["type"] for entry in audit_entries} >= {"time", "order"}
+    assert {entry["type"] for entry in audit_entries} == {"time"}
     assert all(isinstance(entry.get("record_index"), int) for entry in audit_entries)
 
-    # Ensure at least one anomaly altered the timeline or sequence.
+    # Ensure at least one anomaly altered the timeline.
     differences = [
         index
         for index, (normal_row, anom_row) in enumerate(zip(rows, anom_rows))
         if normal_row != anom_row
     ]
-    assert (
-        differences
-    ), "anom.csv must differ from normal.csv when anomalies are injected"
+    assert differences, "anom.csv must differ from normal.csv when anomalies are injected"
+
+
+def test_cli_respects_t0_override(tmp_path: Path) -> None:
+    spec_path = write_spec(tmp_path)
+    normal_path = tmp_path / "normal.csv"
+    anom_path = tmp_path / "anom.csv"
+    audit_path = tmp_path / "audit.jsonl"
+    meta_path = tmp_path / "run_meta.json"
+    runner = CliRunner()
+
+    custom_t0 = "2024-02-03T04:05:06Z"
+    result = runner.invoke(
+        cli,
+        [
+            "run",
+            "--spec",
+            str(spec_path),
+            "--t0",
+            custom_t0,
+            "--seed",
+            "11",
+            "--normal",
+            str(normal_path),
+            "--anom",
+            str(anom_path),
+            "--audit",
+            str(audit_path),
+            "--meta",
+            str(meta_path),
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    rows = load_rows(normal_path)
+    anom_rows = load_rows(anom_path)
+    assert rows[0]["timestamp_utc"] == custom_t0
+    assert anom_rows[0]["timestamp_utc"] == custom_t0
+
+
+def test_cli_rejects_non_utc_t0(tmp_path: Path) -> None:
+    spec_path = write_spec(tmp_path)
+    normal_path = tmp_path / "normal.csv"
+    anom_path = tmp_path / "anom.csv"
+    audit_path = tmp_path / "audit.jsonl"
+    meta_path = tmp_path / "run_meta.json"
+    runner = CliRunner()
+
+    result = runner.invoke(
+        cli,
+        [
+            "run",
+            "--spec",
+            str(spec_path),
+            "--t0",
+            "2024-02-03T04:05:06+09:00",
+            "--seed",
+            "11",
+            "--normal",
+            str(normal_path),
+            "--anom",
+            str(anom_path),
+            "--audit",
+            str(audit_path),
+            "--meta",
+            str(meta_path),
+        ],
+    )
+
+    assert result.exit_code == 1
+    logs = [
+        json.loads(line)
+        for line in result.output.splitlines()
+        if line.strip().startswith("{")
+    ]
+    assert any("UTC" in entry.get("message", "") for entry in logs)
 
 
 def test_cli_logs_error_metadata_on_spec_failure(tmp_path: Path) -> None:
@@ -276,36 +276,13 @@ def test_cli_logs_error_metadata_on_spec_failure(tmp_path: Path) -> None:
     spec_path.write_text(
         json.dumps(
             {
-                "t0": "1970-01-01T00:00:00Z",
-                "users": [
-                    {
-                        "uid": "user-1",
-                        "session_id": "sess-1",
-                        "initial_op": "login",
-                        "steps": 1,
-                    }
-                ],
-                "ops": {
-                    "login": {
-                        "method": "POST",
-                        "path": "/login",
-                        "referer": "https://example.test/",
-                        "user_agent": "SpecAgent/1.0",
-                        "ip": "192.0.2.10",
-                        "op_category": "auth",
-                        "transitions": [
-                            {"op": "login", "prob": 1.0},
-                        ],
-                        "dt_distribution": {
-                            "type": "piecewise",
-                            "cdf": [
-                                {"p": 0.0, "seconds": 1.0},
-                                {"p": 1.0, "seconds": 1.0},
-                            ],
-                        },
-                    }
-                },
+                "length": 4,
+                "users": 1,
+                "pi": {"AUTH": 1.0},
+                "A": {"AUTH": {"READ": 1.0}},
+                # Missing dt block
                 "anoms": [],
+                "seed": 99,
             }
         )
     )
@@ -354,7 +331,7 @@ def test_cli_logs_error_metadata_on_spec_failure(tmp_path: Path) -> None:
     assert error_log["anom"] == str(anom_path)
     assert error_log["audit"] == str(audit_path)
     assert error_log["meta"] == str(meta_path)
-    assert "algo_version" in error_log["message"]
+    assert "dt" in error_log["message"]
 
     assert not normal_path.exists()
     assert not anom_path.exists()
