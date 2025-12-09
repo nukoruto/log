@@ -18,6 +18,7 @@ PACKAGE_ROOT = Path(__file__).resolve().parents[1]
 SRC_ROOT = PACKAGE_ROOT / "src"
 sys.path.insert(0, str(SRC_ROOT))
 
+from models_lstm.cli import build_parser  # noqa: E402
 from models_lstm.score import run_score_command  # noqa: E402
 from models_lstm.train import AnomalyDetectorModel  # noqa: E402
 
@@ -71,6 +72,12 @@ def _create_zero_checkpoint(
         "config": config,
     }
     torch.save(payload, model_path)
+
+
+def _read_scored_csv(path: Path) -> List[dict[str, str]]:
+    """Read a scored CSV file into a list of dictionaries."""
+
+    return list(csv.DictReader(path.open("r", encoding="utf-8")))
 
 
 def test_score_outputs_expected_values(tmp_path: Path) -> None:
@@ -139,11 +146,10 @@ def test_score_outputs_expected_values(tmp_path: Path) -> None:
         model=checkpoint_path,
         input_path=contract_path,
         output_path=tmp_path / "scored.csv",
+        seed=123,
     )
 
-    scored_rows = list(
-        csv.DictReader((tmp_path / "scored.csv").open("r", encoding="utf-8"))
-    )
+    scored_rows = _read_scored_csv(tmp_path / "scored.csv")
 
     assert [
         "timestamp_utc",
@@ -196,7 +202,10 @@ def test_score_outputs_expected_values(tmp_path: Path) -> None:
     # Ensure determinism by running the command a second time and comparing content
     second_output = tmp_path / "scored_again.csv"
     run_score_command(
-        model=checkpoint_path, input_path=contract_path, output_path=second_output
+        model=checkpoint_path,
+        input_path=contract_path,
+        output_path=second_output,
+        seed=123,
     )
 
     assert (tmp_path / "scored.csv").read_text(
@@ -242,13 +251,14 @@ def test_run_score_command_logs_seed(
 
     vocab = ["click", "login"]
     expected_seed = 321
-    _create_zero_checkpoint(checkpoint_path, vocab, seed=expected_seed)
+    _create_zero_checkpoint(checkpoint_path, vocab, seed=None)
     metrics_path.write_text(json.dumps({"thresholds": {}}), encoding="utf-8")
 
     run_score_command(
         model=checkpoint_path,
         input_path=contract_path,
         output_path=tmp_path / "scored.csv",
+        seed=expected_seed,
     )
 
     captured = capsys.readouterr()
@@ -262,3 +272,90 @@ def test_run_score_command_logs_seed(
 
     assert start_log["seed"] == expected_seed
     assert complete_log["seed"] == expected_seed
+
+
+def test_score_cli_requires_seed() -> None:
+    parser = build_parser()
+    with pytest.raises(SystemExit) as excinfo:
+        parser.parse_args(
+            [
+                "score",
+                "--model",
+                "model.ckpt",
+                "--in",
+                "anom.csv",
+                "--out",
+                "scored.csv",
+            ]
+        )
+
+    assert excinfo.value.code == 2
+
+
+def test_run_score_command_respects_weights(tmp_path: Path) -> None:
+    rows = [
+        [
+            "2024-01-01T00:00:00+00:00",
+            "user-1",
+            "session-1",
+            "GET",
+            "/login",
+            "-",
+            "agent",
+            "127.0.0.1",
+            "login",
+        ],
+        [
+            "2024-01-01T00:00:05+00:00",
+            "user-1",
+            "session-1",
+            "GET",
+            "/click",
+            "-",
+            "agent",
+            "127.0.0.1",
+            "click",
+        ],
+        [
+            "2024-01-01T00:00:15+00:00",
+            "user-1",
+            "session-1",
+            "POST",
+            "/logout",
+            "-",
+            "agent",
+            "127.0.0.1",
+            "logout",
+        ],
+    ]
+
+    contract_path = tmp_path / "anom.csv"
+    _write_contract_csv(contract_path, rows)
+
+    model_dir = tmp_path / "runs" / "exp1"
+    model_dir.mkdir(parents=True)
+    checkpoint_path = model_dir / "best.ckpt"
+    metrics_path = model_dir / "metrics.json"
+
+    vocab = ["click", "login", "logout"]
+    _create_zero_checkpoint(checkpoint_path, vocab, seed=111)
+    metrics_path.write_text(json.dumps({"thresholds": {}}), encoding="utf-8")
+
+    output_path = tmp_path / "scored.csv"
+    run_score_command(
+        model=checkpoint_path,
+        input_path=contract_path,
+        output_path=output_path,
+        weight_cls=0.0,
+        weight_time=1.0,
+        seed=111,
+    )
+
+    scored_rows = _read_scored_csv(output_path)
+    assert len(scored_rows) == 3
+    assert float(scored_rows[1]["S"]) == pytest.approx(
+        float(scored_rows[1]["s_time"]), abs=1e-9
+    )
+    assert float(scored_rows[2]["S"]) == pytest.approx(
+        float(scored_rows[2]["s_time"]), abs=1e-9
+    )

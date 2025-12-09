@@ -108,6 +108,24 @@ def _add_score_parser(
         required=True,
         help="Destination path for the scored CSV output.",
     )
+    parser.add_argument(
+        "--seed",
+        type=int,
+        required=True,
+        help="Random seed for deterministic scoring.",
+    )
+    parser.add_argument(
+        "--weight-cls",
+        type=float,
+        default=0.5,
+        help="Weight for the classification score component.",
+    )
+    parser.add_argument(
+        "--weight-time",
+        type=float,
+        default=0.5,
+        help="Weight for the time deviation score component.",
+    )
     parser.set_defaults(func=_handle_score)
 
 
@@ -136,6 +154,9 @@ def _handle_score(args: argparse.Namespace) -> int:
         model=args.model,
         input_path=args.input_path,
         output_path=args.output_path,
+        seed=args.seed,
+        weight_cls=args.weight_cls,
+        weight_time=args.weight_time,
     )
     return 0
 
