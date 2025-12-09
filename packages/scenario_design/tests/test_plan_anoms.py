@@ -98,6 +98,42 @@ def test_plan_cli_accepts_multiple_anomaly_options(tmp_path: Path) -> None:
     ]
 
 
+def test_plan_cli_accepts_colon_anomaly_syntax(tmp_path: Path) -> None:
+    stats_path = _prepare_stats(tmp_path)
+
+    spec_path = tmp_path / "scenario_spec.json"
+    plan_seed = 37
+    plan_result = run_cli(
+        [
+            "plan",
+            "--stats",
+            str(stats_path),
+            "--out",
+            str(spec_path),
+            "--seed",
+            str(plan_seed),
+            "--anom",
+            "time:propagate:p=0.02,scale=3.0",
+            "--anom",
+            "order:p=0.01",
+            "--anom",
+            "unauth:p=0.005",
+            "--anom",
+            "token_replay:p=0.004",
+        ]
+    )
+    assert plan_result.returncode == 0, plan_result.stderr.decode()
+
+    spec = json.loads(spec_path.read_text(encoding="utf-8"))
+    assert spec["seed"] == plan_seed
+    assert spec["anoms"] == [
+        {"type": "time", "mode": "propagate", "p": 0.02, "scale": 3.0},
+        {"type": "order", "p": 0.01},
+        {"type": "unauth", "p": 0.005},
+        {"type": "token_replay", "p": 0.004},
+    ]
+
+
 def test_plan_cli_is_deterministic_with_time_delta(tmp_path: Path) -> None:
     stats_path = _prepare_stats(tmp_path)
 

@@ -45,7 +45,12 @@ def parse_anomaly_options(options: Sequence[str] | None) -> list[Dict[str, Any]]
 def parse_anomaly_option(option: str) -> Dict[str, Any]:
     """Parse a single anomaly CLI option string."""
 
-    anomaly_type, params = _extract_option_components(option)
+    anomaly_type: str
+    params: Dict[str, str]
+    if "(" in option and option.strip().endswith(")"):
+        anomaly_type, params = _extract_option_components_parenthesized(option)
+    else:
+        anomaly_type, params = _extract_option_components_colon(option)
     if anomaly_type not in _ALLOWED_ANOMALY_TYPES:
         raise AnomalyOptionError(f"Unsupported anomaly type: {anomaly_type}")
 
@@ -55,7 +60,7 @@ def parse_anomaly_option(option: str) -> Dict[str, Any]:
     return _build_simple_anomaly(anomaly_type, params)
 
 
-def _extract_option_components(option: str) -> tuple[str, Dict[str, str]]:
+def _extract_option_components_parenthesized(option: str) -> tuple[str, Dict[str, str]]:
     if not isinstance(option, str) or not option.strip():
         raise AnomalyOptionError("Anomaly option must be a non-empty string")
 
@@ -71,30 +76,73 @@ def _extract_option_components(option: str) -> tuple[str, Dict[str, str]]:
         raise AnomalyOptionError("Anomaly option must include an anomaly type")
 
     params_text = params_part.strip()
+    params = _parse_param_assignments(params_text)
+    return anomaly_type, params
+
+
+def _extract_option_components_colon(option: str) -> tuple[str, Dict[str, str]]:
+    if not isinstance(option, str) or not option.strip():
+        raise AnomalyOptionError("Anomaly option must be a non-empty string")
+
+    text = option.strip()
+    if ":" not in text:
+        raise AnomalyOptionError(
+            "Anomaly option must include ':' separators (e.g., type:p=0.1)"
+        )
+
+    parts = text.split(":", 2)
+    anomaly_type = parts[0].strip()
+    if not anomaly_type:
+        raise AnomalyOptionError("Anomaly option must include an anomaly type")
+
     params: Dict[str, str] = {}
+    remainder_parts = parts[1:]
+    params_text = ":".join(remainder_parts)
+
+    if anomaly_type == "time" and remainder_parts:
+        first_segment = remainder_parts[0].strip()
+        if first_segment and "=" not in first_segment and "," not in first_segment:
+            params["mode"] = first_segment
+            params_text = remainder_parts[1] if len(remainder_parts) > 1 else ""
+
     if params_text:
-        for token in params_text.split(","):
-            token = token.strip()
-            if not token:
-                continue
-            key, separator, value = token.partition("=")
-            if not separator:
-                raise AnomalyOptionError(
-                    f"Invalid parameter format in anomaly option: {token}"
-                )
-            key = key.strip()
-            value = value.strip()
-            if not key or not value:
-                raise AnomalyOptionError(
-                    f"Invalid parameter assignment in anomaly option: {token}"
-                )
-            if key in params:
-                raise AnomalyOptionError(
-                    f"Duplicate parameter '{key}' in anomaly option"
-                )
-            params[key] = value
+        parsed_params = _parse_param_assignments(params_text)
+        duplicate_keys = set(params.keys()) & set(parsed_params.keys())
+        if duplicate_keys:
+            duplicates = ", ".join(sorted(duplicate_keys))
+            raise AnomalyOptionError(
+                f"Duplicate parameter(s) in anomaly option: {duplicates}"
+            )
+        params.update(parsed_params)
 
     return anomaly_type, params
+
+
+def _parse_param_assignments(params_text: str) -> Dict[str, str]:
+    params: Dict[str, str] = {}
+    if not params_text:
+        return params
+
+    for token in params_text.split(","):
+        token = token.strip()
+        if not token:
+            continue
+        key, separator, value = token.partition("=")
+        if not separator:
+            raise AnomalyOptionError(
+                f"Invalid parameter format in anomaly option: {token}"
+            )
+        key = key.strip()
+        value = value.strip()
+        if not key or not value:
+            raise AnomalyOptionError(
+                f"Invalid parameter assignment in anomaly option: {token}"
+            )
+        if key in params:
+            raise AnomalyOptionError(f"Duplicate parameter '{key}' in anomaly option")
+        params[key] = value
+
+    return params
 
 
 def _build_simple_anomaly(
