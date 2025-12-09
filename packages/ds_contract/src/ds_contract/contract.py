@@ -25,7 +25,6 @@ REQUIRED_CONTRACT_FIELDS: Final[frozenset[str]] = frozenset(
     {
         "timestamp_utc",
         "uid",
-        "session_id",
         "method",
         "path",
         "referer",

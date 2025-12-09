@@ -6,6 +6,7 @@ import argparse
 import csv
 import hashlib
 import json
+import hmac
 import random
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -224,7 +225,8 @@ def _handle_validate(args: argparse.Namespace, logger: JsonLogger) -> dict[str, 
         )
 
     mapping = _load_mapping(mapping_path)
-    rows = _read_and_normalize_contract(input_path, mapping)
+    uid_key = str(args.seed).encode("utf-8")
+    rows = _read_and_normalize_contract(input_path, mapping, uid_key)
     _write_csv(output_path, CONTRACT_COLUMNS, rows)
 
     meta = {
@@ -233,6 +235,11 @@ def _handle_validate(args: argparse.Namespace, logger: JsonLogger) -> dict[str, 
         "row_count": len(rows),
         "mapping": mapping,
         "required_columns": sorted(REQUIRED_CONTRACT_FIELDS),
+        "uid_hmac": {
+            "algorithm": "HMAC-SHA256",
+            "key_source": "seed",
+            "message_fields": ["ip", "user_agent"],
+        },
     }
     meta_path.write_text(
         json.dumps(meta, indent=2, ensure_ascii=False), encoding="utf-8"
@@ -360,7 +367,7 @@ def _load_mapping(path: Path) -> dict[str, str]:
         normalized[key] = value
 
     missing = ensure_required_fields(normalized.keys())
-    required_missing = frozenset(field for field in missing if field != "ip")
+    required_missing = frozenset(missing)
     if required_missing:
         raise CommandError(
             "MISSING_MAPPING",
@@ -390,9 +397,10 @@ def _parse_simple_yaml(text: str) -> dict[str, str]:
 
 
 def _read_and_normalize_contract(
-    input_path: Path, mapping: dict[str, str]
+    input_path: Path, mapping: dict[str, str], uid_key: bytes
 ) -> list[dict[str, str]]:
     rows: list[dict[str, str]] = []
+    previous_timestamp: str | None = None
 
     with input_path.open("r", encoding="utf-8") as handle:
         reader = csv.DictReader(handle)
@@ -413,7 +421,7 @@ def _read_and_normalize_contract(
             for column in CONTRACT_COLUMNS:
                 source_column = mapping.get(column)
                 value = raw_row.get(source_column, "") if source_column else ""
-                if column in REQUIRED_CONTRACT_FIELDS and column != "ip" and not value:
+                if column in REQUIRED_CONTRACT_FIELDS and not value:
                     raise CommandError(
                         "MISSING_REQUIRED_VALUE",
                         f"Row {index} is missing required column '{source_column}'.",
@@ -423,9 +431,32 @@ def _read_and_normalize_contract(
                     contract_row[column] = _normalize_timestamp(value)
                 else:
                     contract_row[column] = value
-            rows.append(contract_row)
 
-    rows.sort(key=lambda item: item["timestamp_utc"])
+            current_timestamp = contract_row["timestamp_utc"]
+            if (
+                previous_timestamp is not None
+                and current_timestamp < previous_timestamp
+            ):
+                raise CommandError(
+                    "REVERSED_ORDER",
+                    (
+                        "Input timestamps must be non-decreasing; "
+                        f"row {index} timestamp {current_timestamp} "
+                        f"is earlier than previous {previous_timestamp}."
+                    ),
+                    hint=(
+                        "Sort the raw CSV by timestamp_utc ascending before running validate."
+                    ),
+                )
+            previous_timestamp = current_timestamp
+
+            uid_message = f"{contract_row['ip']}|{contract_row['user_agent']}".encode(
+                "utf-8"
+            )
+            contract_row["uid"] = hmac.new(
+                uid_key, uid_message, hashlib.sha256
+            ).hexdigest()
+            rows.append(contract_row)
     return rows
 
 
@@ -494,9 +525,34 @@ def _load_contract_rows(path: Path) -> list[dict[str, str]]:
                 "INVALID_CONTRACT_HEADER",
                 "Contract CSV must match the 9-column contract schema.",
             )
-        rows = [dict(row) for row in reader]
+        rows: list[dict[str, str]] = []
+        previous_timestamp: str | None = None
+        for index, row in enumerate(reader, start=1):
+            current_timestamp = row.get("timestamp_utc", "")
+            if not current_timestamp:
+                raise CommandError(
+                    "MISSING_TIMESTAMP",
+                    f"Row {index} is missing timestamp_utc.",
+                    hint="Ensure contract.csv preserves the timestamp_utc column.",
+                )
+            if (
+                previous_timestamp is not None
+                and current_timestamp < previous_timestamp
+            ):
+                raise CommandError(
+                    "REVERSED_ORDER",
+                    (
+                        "Contract CSV must be sorted by timestamp_utc; "
+                        f"row {index} timestamp {current_timestamp} "
+                        f"is earlier than previous {previous_timestamp}."
+                    ),
+                    hint=(
+                        "Sort contract.csv ascending by timestamp_utc before running sessionize."
+                    ),
+                )
+            previous_timestamp = current_timestamp
+            rows.append(dict(row))
 
-    rows.sort(key=lambda item: item["timestamp_utc"])
     return rows
 
 
@@ -516,9 +572,34 @@ def _load_sessioned_rows(path: Path) -> list[dict[str, str]]:
                 "INVALID_SESSIONED_HEADER",
                 "Sessioned CSV must include contract columns plus delta_t/log_delta_t.",
             )
-        rows = [dict(row) for row in reader]
+        rows: list[dict[str, str]] = []
+        previous_timestamp: str | None = None
+        for index, row in enumerate(reader, start=1):
+            current_timestamp = row.get("timestamp_utc", "")
+            if not current_timestamp:
+                raise CommandError(
+                    "MISSING_TIMESTAMP",
+                    f"Row {index} is missing timestamp_utc.",
+                    hint="Ensure sessioned.csv preserves the timestamp_utc column.",
+                )
+            if (
+                previous_timestamp is not None
+                and current_timestamp < previous_timestamp
+            ):
+                raise CommandError(
+                    "REVERSED_ORDER",
+                    (
+                        "Sessioned CSV must be sorted by timestamp_utc; "
+                        f"row {index} timestamp {current_timestamp} "
+                        f"is earlier than previous {previous_timestamp}."
+                    ),
+                    hint=(
+                        "Sort sessioned.csv ascending by timestamp_utc before running deltify."
+                    ),
+                )
+            previous_timestamp = current_timestamp
+            rows.append(dict(row))
 
-    rows.sort(key=lambda item: item["timestamp_utc"])
     return rows
 
 

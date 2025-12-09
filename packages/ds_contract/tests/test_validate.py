@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import csv
+import hashlib
+import hmac
 import json
 from pathlib import Path
 from typing import Iterable
@@ -35,6 +37,12 @@ def _write_mapping(path: Path, mapping: dict[str, str]) -> None:
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
+def _expected_uid(ip: str, user_agent: str, seed: int) -> str:
+    key = str(seed).encode("utf-8")
+    message = f"{ip}|{user_agent}".encode("utf-8")
+    return hmac.new(key, message, hashlib.sha256).hexdigest()
+
+
 def test_validate_accepts_epoch_ms_and_timezone_and_emits_sorted_bytes(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
@@ -58,17 +66,6 @@ def test_validate_accepts_epoch_ms_and_timezone_and_emits_sorted_bytes(
         ],
         rows=[
             {
-                "timestamp": "2024-01-02T09:15:00+09:00",
-                "user": "user-iso",
-                "session": "s-1",
-                "method": "GET",
-                "path": "/index",
-                "referer": "-",
-                "user_agent": "ua",
-                "ip": "198.51.100.2",
-                "category": "read",
-            },
-            {
                 "timestamp": "1704154200000",  # 2024-01-02T00:10:00Z in ms
                 "user": "user-epoch",
                 "session": "s-2",
@@ -78,6 +75,17 @@ def test_validate_accepts_epoch_ms_and_timezone_and_emits_sorted_bytes(
                 "user_agent": "ua",
                 "ip": "198.51.100.1",
                 "category": "write",
+            },
+            {
+                "timestamp": "2024-01-02T09:15:00+09:00",
+                "user": "user-iso",
+                "session": "s-1",
+                "method": "GET",
+                "path": "/index",
+                "referer": "-",
+                "user_agent": "ua",
+                "ip": "198.51.100.2",
+                "category": "read",
             },
         ],
     )
@@ -116,11 +124,16 @@ def test_validate_accepts_epoch_ms_and_timezone_and_emits_sorted_bytes(
     assert logs[0]["event"] == "start"
     assert logs[-1]["event"] == "complete"
 
-    expected_bytes = (
-        b"timestamp_utc,uid,session_id,method,path,referer,user_agent,ip,op_category\r\n"
-        b"2024-01-02T00:10:00+00:00,user-epoch,s-2,POST,/submit,https://ref,ua,198.51.100.1,write\r\n"
-        b"2024-01-02T00:15:00+00:00,user-iso,s-1,GET,/index,-,ua,198.51.100.2,read\r\n"
-    )
+    uid_epoch = _expected_uid("198.51.100.1", "ua", seed=11)
+    uid_iso = _expected_uid("198.51.100.2", "ua", seed=11)
+    expected_bytes = "\r\n".join(
+        [
+            "timestamp_utc,uid,session_id,method,path,referer,user_agent,ip,op_category",
+            f"2024-01-02T00:10:00+00:00,{uid_epoch},s-2,POST,/submit,https://ref,ua,198.51.100.1,write",
+            f"2024-01-02T00:15:00+00:00,{uid_iso},s-1,GET,/index,-,ua,198.51.100.2,read",
+            "",
+        ]
+    ).encode("utf-8")
     assert contract_path.read_bytes() == expected_bytes
 
     meta = json.loads(meta_path.read_text(encoding="utf-8"))
@@ -203,7 +216,7 @@ def test_validate_without_meta_argument_uses_default_path(
     assert meta["mapping"]["timestamp_utc"] == "timestamp"
 
 
-def test_validate_allows_missing_optional_ip_mapping(
+def test_validate_requires_ip_mapping(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
     raw_path = tmp_path / "raw.csv"
@@ -265,16 +278,11 @@ def test_validate_allows_missing_optional_ip_mapping(
             str(meta_path),
         ]
     )
-    assert exit_code == 0
+    assert exit_code == 1
     logs = _load_logs(capsys.readouterr().out)
-    assert logs[-1]["event"] == "complete"
-
-    with contract_path.open("r", encoding="utf-8") as handle:
-        reader = csv.DictReader(handle)
-        row = next(reader)
-    assert row["ip"] == ""
-    meta = json.loads(meta_path.read_text(encoding="utf-8"))
-    assert "ip" not in meta["mapping"]
+    assert logs[-1]["event"] == "error"
+    assert logs[-1]["code"] == "MISSING_MAPPING"
+    assert "ip" in str(logs[-1]["message"])
 
 
 def test_validate_missing_required_value_fails(
@@ -424,5 +432,91 @@ def test_validate_rejects_naive_timestamp(
     assert "2024-01-01T00:00:00" in str(logs[-1]["message"])
     assert "hint" in logs[-1]
     assert "ISO8601" in str(logs[-1]["hint"])
+    assert not contract_path.exists()
+    assert not meta_path.exists()
+
+
+def test_validate_rejects_descending_timestamps(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    raw_path = tmp_path / "raw.csv"
+    map_path = tmp_path / "map.yaml"
+    contract_path = tmp_path / "contract.csv"
+    meta_path = tmp_path / "meta.json"
+
+    _write_csv(
+        raw_path,
+        fieldnames=[
+            "timestamp",
+            "user",
+            "session",
+            "method",
+            "path",
+            "referer",
+            "user_agent",
+            "ip",
+            "category",
+        ],
+        rows=[
+            {
+                "timestamp": "2024-01-01T00:01:00Z",
+                "user": "user-1",
+                "session": "s-1",
+                "method": "GET",
+                "path": "/index",
+                "referer": "-",
+                "user_agent": "ua",
+                "ip": "198.51.100.1",
+                "category": "view",
+            },
+            {
+                "timestamp": "2024-01-01T00:00:00Z",
+                "user": "user-2",
+                "session": "s-2",
+                "method": "POST",
+                "path": "/submit",
+                "referer": "-",
+                "user_agent": "ua",
+                "ip": "198.51.100.2",
+                "category": "write",
+            },
+        ],
+    )
+
+    _write_mapping(
+        map_path,
+        {
+            "timestamp_utc": "timestamp",
+            "uid": "user",
+            "session_id": "session",
+            "method": "method",
+            "path": "path",
+            "referer": "referer",
+            "user_agent": "user_agent",
+            "ip": "ip",
+            "op_category": "category",
+        },
+    )
+
+    exit_code = cli.main(
+        [
+            "--seed",
+            "13",
+            "validate",
+            str(raw_path),
+            "--map",
+            str(map_path),
+            "--out",
+            str(contract_path),
+            "--meta",
+            str(meta_path),
+        ]
+    )
+
+    assert exit_code == 1
+    logs = _load_logs(capsys.readouterr().out)
+    assert logs[-1]["event"] == "error"
+    assert logs[-1]["code"] == "REVERSED_ORDER"
+    assert "row 2" in str(logs[-1]["message"]).lower()
     assert not contract_path.exists()
     assert not meta_path.exists()
