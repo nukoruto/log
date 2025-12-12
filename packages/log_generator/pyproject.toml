@@ -1,0 +1,21 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "log-generator"
+version = "0.1.0"
+description = "CLI for generating synthetic log data"
+requires-python = ">=3.11"
+authors = [{name = "session-lab", email = "devnull@example.com"}]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+]
+
+[project.scripts]
+log-generator = "log_generator.cli:cli"
+
+[tool.setuptools.packages.find]
+where = ["src"]
