@@ -235,11 +235,7 @@ def _handle_validate(args: argparse.Namespace, logger: JsonLogger) -> dict[str, 
         "row_count": len(rows),
         "mapping": mapping,
         "required_columns": sorted(REQUIRED_CONTRACT_FIELDS),
-        "uid_hmac": {
-            "algorithm": "HMAC-SHA256",
-            "key_source": "seed",
-            "message_fields": ["ip", "user_agent"],
-        },
+        "required_columns": sorted(REQUIRED_CONTRACT_FIELDS),
     }
     meta_path.write_text(
         json.dumps(meta, indent=2, ensure_ascii=False), encoding="utf-8"
@@ -353,11 +349,11 @@ def _load_mapping(path: Path) -> dict[str, str]:
 
     normalized: dict[str, str] = {}
     for key, value in mapping.items():
-        if key not in CONTRACT_COLUMNS:
+        if key not in CONTRACT_COLUMNS and key not in ("ip", "user_agent"):
             raise CommandError(
                 "UNKNOWN_MAPPING_KEY",
                 f"Unsupported contract column '{key}' in mapping file.",
-                hint="Use only columns defined in the 9-column contract schema.",
+                hint="Use only columns defined in the contract schema or 'ip'/'user_agent' for UID generation.",
             )
         if not isinstance(value, str):
             raise CommandError(
@@ -366,7 +362,11 @@ def _load_mapping(path: Path) -> dict[str, str]:
             )
         normalized[key] = value
 
-    missing = ensure_required_fields(normalized.keys())
+    missing = set(ensure_required_fields(normalized.keys()))
+    # If ip and user_agent are mapped, uid is not required in the mapping (it will be generated)
+    if "ip" in normalized and "user_agent" in normalized and "uid" in missing:
+        missing.remove("uid")
+        
     required_missing = frozenset(missing)
     if required_missing:
         raise CommandError(
@@ -404,10 +404,11 @@ def _read_and_normalize_contract(
 
     with input_path.open("r", encoding="utf-8") as handle:
         reader = csv.DictReader(handle)
+        # Check only for REQUIRED columns in the mapping
         missing_columns = [
             source
-            for source in mapping.values()
-            if source not in (reader.fieldnames or [])
+            for col, source in mapping.items()
+            if col in REQUIRED_CONTRACT_FIELDS and source not in (reader.fieldnames or [])
         ]
         if missing_columns:
             raise CommandError(
@@ -421,16 +422,26 @@ def _read_and_normalize_contract(
             for column in CONTRACT_COLUMNS:
                 source_column = mapping.get(column)
                 value = raw_row.get(source_column, "") if source_column else ""
+                
                 if column in REQUIRED_CONTRACT_FIELDS and not value:
-                    raise CommandError(
-                        "MISSING_REQUIRED_VALUE",
-                        f"Row {index} is missing required column '{source_column}'.",
-                        hint="Ensure required columns are populated in the raw CSV.",
-                    )
+                    # Exception: uid can be missing if we have ip/ua to generate it
+                    if column == "uid" and "ip" in mapping and "user_agent" in mapping:
+                        pass
+                    else:
+                        raise CommandError(
+                            "MISSING_REQUIRED_VALUE",
+                            f"Row {index} is missing required column '{source_column}'.",
+                            hint="Ensure required columns are populated in the raw CSV.",
+                        )
+                
                 if column == "timestamp_utc":
                     contract_row[column] = _normalize_timestamp(value)
                 else:
                     contract_row[column] = value
+
+            # Derive op_category if missing
+            if not contract_row.get("op_category"):
+                contract_row["op_category"] = contract_row.get("method", "UNKNOWN")
 
             current_timestamp = contract_row["timestamp_utc"]
             if (
@@ -450,12 +461,30 @@ def _read_and_normalize_contract(
                 )
             previous_timestamp = current_timestamp
 
-            uid_message = f"{contract_row['ip']}|{contract_row['user_agent']}".encode(
-                "utf-8"
-            )
-            contract_row["uid"] = hmac.new(
-                uid_key, uid_message, hashlib.sha256
-            ).hexdigest()
+            # UID handling: generate from ip/ua if available (priority), else check for provided uid
+            # The user requested HMAC(s, ip || ua).
+            # We need to get ip/ua from raw_row using the mapping, but they are not in CONTRACT_COLUMNS.
+            # So we need to look them up specifically.
+            
+            raw_ip = ""
+            raw_ua = ""
+            if "ip" in mapping:
+                raw_ip = raw_row.get(mapping["ip"], "")
+            if "user_agent" in mapping:
+                raw_ua = raw_row.get(mapping["user_agent"], "")
+
+            if raw_ip and raw_ua:
+                uid_message = f"{raw_ip}|{raw_ua}".encode("utf-8")
+                contract_row["uid"] = hmac.new(
+                    uid_key, uid_message, hashlib.sha256
+                ).hexdigest()
+            elif not contract_row.get("uid"):
+                 raise CommandError(
+                    "MISSING_UID_SOURCE",
+                    f"Row {index} has no 'uid' and missing 'ip'/'user_agent' to generate it.",
+                    hint="Provide 'ip' and 'user_agent' in mapping for HMAC UID generation, or provide 'uid'.",
+                )
+            
             rows.append(contract_row)
     return rows
 

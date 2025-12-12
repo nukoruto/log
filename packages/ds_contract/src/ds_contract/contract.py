@@ -15,9 +15,6 @@ CONTRACT_COLUMNS: Final[tuple[str, ...]] = (
     "session_id",
     "method",
     "path",
-    "referer",
-    "user_agent",
-    "ip",
     "op_category",
 )
 
@@ -27,10 +24,6 @@ REQUIRED_CONTRACT_FIELDS: Final[frozenset[str]] = frozenset(
         "uid",
         "method",
         "path",
-        "referer",
-        "user_agent",
-        "ip",
-        "op_category",
     }
 )
 
