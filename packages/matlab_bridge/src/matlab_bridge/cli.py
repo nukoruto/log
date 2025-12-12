@@ -43,7 +43,10 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.command == "export":
         return _run_export(
-            Path(args.input), Path(args.output), Path(args.meta), args.seed
+            Path(args.input),
+            Path(args.output),
+            Path(args.meta) if args.meta is not None else None,
+            args.seed,
         )
 
     parser.error("No command specified")
@@ -70,109 +73,40 @@ def _build_parser() -> argparse.ArgumentParser:
     export_parser.add_argument(
         "--meta",
         dest="meta",
-        required=True,
-        help="Path to write the export metadata JSON",
+        help="Optional path to write the export metadata JSON",
     )
     export_parser.add_argument(
         "--seed",
         dest="seed",
         type=int,
         required=True,
-        help="Required deterministic seed for the export pipeline",
+        help="Deterministic seed for the export pipeline",
     )
 
     return parser
 
 
 def _handle_parser_error(argv: list[str], error: ParserError) -> int:
-    if not argv:
-        _log_event(
-            "export.error",
-            {
-                "error": "argument_error",
-                "message": error.message,
-                "algo_version": ALGO_VERSION,
-                "seed": None,
-            },
-        )
-        return 1
+    payload: dict[str, Any] = {
+        "error": "argument_error",
+        "message": error.message,
+        "algo_version": ALGO_VERSION,
+    }
 
-    command = argv[0]
-    if command == "export":
-        seed_value = _extract_optional_arg(argv, "--seed")
-        meta_value = _extract_optional_arg(argv, "--meta")
-        seed_int: int | None
-        if seed_value is None:
-            seed_int = None
-        else:
-            try:
-                seed_int = int(seed_value)
-            except ValueError:
-                seed_int = None
-        base_payload: dict[str, Any] = {
-            "algo_version": ALGO_VERSION,
-            "seed": seed_int,
-        }
-        if meta_value is not None:
-            base_payload["meta"] = meta_value
-
-        if "--seed" in error.message and "--meta" not in error.message:
-            payload = {
-                "error": "missing_seed",
-                "message": "--seed is required for deterministic behaviour",
-                **base_payload,
-            }
-        elif "--meta" in error.message and "--seed" not in error.message:
-            payload = {
-                "error": "missing_meta",
-                "message": "--meta must be provided to capture execution metadata",
-                **base_payload,
-            }
-        elif "--meta" in error.message and "--seed" in error.message:
-            payload = {
-                "error": "missing_arguments",
-                "message": error.message,
-                **base_payload,
-            }
-        else:
-            payload = {
-                "error": "argument_error",
-                "message": error.message,
-                **base_payload,
-            }
-
-        _log_event("export.error", payload)
-        return 1
-
-    _log_event(
-        "export.error",
-        {
-            "error": "argument_error",
-            "message": error.message,
-            "algo_version": ALGO_VERSION,
-            "seed": None,
-        },
-    )
+    _log_event("export.error", payload)
     return 1
 
 
-def _extract_optional_arg(argv: list[str], flag: str) -> str | None:
-    try:
-        index = argv.index(flag)
-    except ValueError:
-        return None
-    if index + 1 >= len(argv):
-        return None
-    return argv[index + 1]
-
-
-def _run_export(input_path: Path, output_path: Path, meta_path: Path, seed: int) -> int:
+def _run_export(
+    input_path: Path, output_path: Path, meta_path: Path | None, seed: int
+) -> int:
     _set_deterministic_seed(seed)
-    base_context = {
+    base_context: dict[str, Any] = {
         "seed": seed,
         "algo_version": ALGO_VERSION,
-        "meta": str(meta_path),
     }
+    if meta_path is not None:
+        base_context["meta"] = str(meta_path)
 
     input_sha256: str | None
     hash_error: OSError | None = None
@@ -215,11 +149,15 @@ def _run_export(input_path: Path, output_path: Path, meta_path: Path, seed: int)
             input_path,
             output_path,
             meta_path=meta_path,
-            meta_context={
-                "seed": seed,
-                "algo_version": ALGO_VERSION,
-                "output": str(output_path),
-            },
+            meta_context=(
+                {
+                    "seed": seed,
+                    "algo_version": ALGO_VERSION,
+                    "output": str(output_path),
+                }
+                if meta_path is not None
+                else None
+            ),
         )
     except FileNotFoundError as exc:
         _log_event(

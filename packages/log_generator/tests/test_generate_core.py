@@ -193,7 +193,9 @@ def test_cli_generates_contract_outputs_with_anomalies(tmp_path: Path) -> None:
         for index, (normal_row, anom_row) in enumerate(zip(rows, anom_rows))
         if normal_row != anom_row
     ]
-    assert differences, "anom.csv must differ from normal.csv when anomalies are injected"
+    assert (
+        differences
+    ), "anom.csv must differ from normal.csv when anomalies are injected"
 
 
 def test_cli_respects_t0_override(tmp_path: Path) -> None:

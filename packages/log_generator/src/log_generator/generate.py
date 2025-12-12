@@ -140,7 +140,11 @@ def load_spec(path: Path, *, override_t0: str | None = None) -> ScenarioSpec:
 
     algo_version = str(data.get("algo_version", "1.0.0"))
 
-    t0_raw = override_t0 if override_t0 is not None else data.get("t0", "1970-01-01T00:00:00Z")
+    t0_raw = (
+        override_t0
+        if override_t0 is not None
+        else data.get("t0", "1970-01-01T00:00:00Z")
+    )
     t0 = _parse_utc_timestamp(t0_raw)
 
     if "ops" in data:
@@ -170,7 +174,9 @@ def load_spec(path: Path, *, override_t0: str | None = None) -> ScenarioSpec:
     return _load_markov_spec(data, algo_version, t0)
 
 
-def _load_markov_spec(data: Mapping[str, Any], algo_version: str, t0: datetime) -> ScenarioSpec:
+def _load_markov_spec(
+    data: Mapping[str, Any], algo_version: str, t0: datetime
+) -> ScenarioSpec:
     if "length" not in data or "users" not in data:
         raise ScenarioSpecError("scenario spec must include 'length' and 'users'")
 
@@ -197,11 +203,16 @@ def _load_markov_spec(data: Mapping[str, Any], algo_version: str, t0: datetime) 
     mu_raw = lognorm.get("mu")
     sigma_raw = lognorm.get("sigma")
     if not isinstance(mu_raw, Mapping) or not isinstance(sigma_raw, Mapping):
-        raise ScenarioSpecError("scenario spec dt.lognorm must include 'mu' and 'sigma'")
+        raise ScenarioSpecError(
+            "scenario spec dt.lognorm must include 'mu' and 'sigma'"
+        )
 
     pi_distribution = _parse_probability_mapping(pi_raw, "pi")
     categories = sorted(
-        set(pi_raw.keys()) | set(A_raw.keys()) | set(mu_raw.keys()) | set(sigma_raw.keys())
+        set(pi_raw.keys())
+        | set(A_raw.keys())
+        | set(mu_raw.keys())
+        | set(sigma_raw.keys())
     )
 
     operations: dict[str, OperationSpec] = {}
@@ -615,9 +626,7 @@ def write_audit_log(path: Path, entries: Sequence[dict[str, Any]]) -> None:
             fp.write("\n")
 
 
-def _sample_dt_seconds(
-    rng: random.Random, op_spec: OperationSpec
-) -> float:
+def _sample_dt_seconds(rng: random.Random, op_spec: OperationSpec) -> float:
     if op_spec.cdf_points:
         cdf_points = op_spec.cdf_points
         u = rng.random()

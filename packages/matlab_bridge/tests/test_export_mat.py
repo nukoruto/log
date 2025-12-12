@@ -64,16 +64,15 @@ def make_row(
     )
 
 
-def test_export_help_marks_required_arguments(capsys) -> None:
+def test_export_help_marks_optional_meta_and_seed(capsys) -> None:
     with pytest.raises(SystemExit) as excinfo:
         cli.main(["export", "--help"])
 
     assert excinfo.value.code == 0
     help_output = capsys.readouterr().out
-    assert "--meta META" in help_output
+    assert "[--meta META]" in help_output
     assert "--seed SEED" in help_output
-    assert "[--meta META]" not in help_output
-    assert "[--seed SEED]" not in help_output
+    assert "(default: 0)" not in help_output
 
 
 def test_export_creates_mat_file(tmp_path: Path, capsys) -> None:
@@ -92,7 +91,7 @@ def test_export_creates_mat_file(tmp_path: Path, capsys) -> None:
                 "0.0",
                 "0.1",
                 "0.05",
-                "0.20",
+                "0.00",
                 "1.00",
                 "0",
                 "0",
@@ -105,10 +104,10 @@ def test_export_creates_mat_file(tmp_path: Path, capsys) -> None:
                 "0.1",
                 "0.2",
                 "0.06",
-                "0.40",
-                "1.50",
+                "0.50",
+                "1.00",
                 "0",
-                "1",
+                "1.10",
             ),
             make_row(
                 "2024-01-01T00:00:02Z",
@@ -118,10 +117,10 @@ def test_export_creates_mat_file(tmp_path: Path, capsys) -> None:
                 "0.2",
                 "0.3",
                 "0.07",
-                "0.60",
-                "2.00",
+                "1.00",
+                "1.00",
                 "1",
-                "0",
+                "1.00",
             ),
         ],
     )
@@ -167,15 +166,15 @@ def test_export_creates_mat_file(tmp_path: Path, capsys) -> None:
     t_values = [float(x) for x in mat["t"].flatten()]
 
     assert all(
-        isclose(a, b, rel_tol=1e-9, abs_tol=1e-9) for a, b in zip(ref, [1.0, 1.5, 2.0])
+        isclose(a, b, rel_tol=1e-9, abs_tol=1e-9) for a, b in zip(ref, [1.0, 1.0, 1.0])
     )
     assert all(
         isclose(a, b, rel_tol=1e-9, abs_tol=1e-9)
-        for a, b in zip(y_lstm, [0.2, 0.4, 0.6])
+        for a, b in zip(y_lstm, [0.0, 0.5, 1.0])
     )
     assert all(
         isclose(a, b, rel_tol=1e-9, abs_tol=1e-9)
-        for a, b in zip(y_pid, [0.0, 1.0, 0.0])
+        for a, b in zip(y_pid, [0.0, 1.1, 1.0])
     )
     assert all(
         isclose(a, b, rel_tol=1e-9, abs_tol=1e-9)
@@ -193,6 +192,8 @@ def test_export_creates_mat_file(tmp_path: Path, capsys) -> None:
     )
     assert parsed_timestamp.tzinfo is not None
     assert meta["generated_at"] == "2024-01-01T00:00:02Z"
+    assert "metrics" not in meta
+    assert meta["metrics_note"] == "Performance metrics are computed in MATLAB."
 
 
 def test_export_is_deterministic_for_same_seed(tmp_path: Path, capsys) -> None:
@@ -463,10 +464,108 @@ def test_export_fails_for_non_monotonic_time(tmp_path: Path, capsys) -> None:
     assert logs[-1]["input_sha256"] == expected_sha
 
 
-def test_export_missing_seed_fails(tmp_path: Path, capsys) -> None:
+def test_export_quickstart_succeeds_without_optional_flags(
+    tmp_path: Path, capsys
+) -> None:
     csv_path = tmp_path / "scored.csv"
     out_path = tmp_path / "ref.mat"
-    meta_path = tmp_path / "meta.json"
+    write_csv(
+        csv_path,
+        [
+            ",".join(HEADER),
+            make_row(
+                "2024-01-01T00:00:00Z",
+                "u0",
+                "s0",
+                "catA",
+                "0.0",
+                "0.1",
+                "0.2",
+                "0.3",
+                "0.9",
+                "0",
+                "0",
+            ),
+            make_row(
+                "2024-01-01T00:00:01Z",
+                "u0",
+                "s0",
+                "catA",
+                "0.1",
+                "0.2",
+                "0.3",
+                "0.6",
+                "1.0",
+                "1",
+                "1",
+            ),
+        ],
+    )
+
+    exit_code = cli.main(
+        ["export", "--in", str(csv_path), "--out", str(out_path), "--seed", "0"]
+    )
+
+    assert exit_code == 0
+    assert out_path.exists()
+
+    stdout = capsys.readouterr().out.strip().splitlines()
+    logs = [json.loads(line) for line in stdout if line]
+    assert logs[0]["event"] == "export.start"
+    assert logs[0]["seed"] == 0
+    assert "meta" not in logs[0]
+    assert logs[-1]["event"] == "export.complete"
+    assert logs[-1]["seed"] == 0
+    assert "meta" not in logs[-1]
+
+    mat = loadmat(out_path)
+    assert set(mat) >= {"ref", "y_lstm", "y_pid", "t"}
+
+    ref = [float(x) for x in mat["ref"].flatten()]
+    lstm = [float(x) for x in mat["y_lstm"].flatten()]
+    pid = [float(x) for x in mat["y_pid"].flatten()]
+    t_values = [float(x) for x in mat["t"].flatten()]
+
+    assert ref == [0.9, 1.0]
+    assert lstm == [0.3, 0.6]
+    assert pid == [0.0, 1.0]
+    assert t_values == [0.0, 1.0]
+
+
+def test_export_missing_required_argument_logs_error(tmp_path: Path, capsys) -> None:
+    csv_path = tmp_path / "scored.csv"
+    write_csv(
+        csv_path,
+        [
+            ",".join(HEADER),
+            make_row(
+                "2024-01-01T00:00:00Z",
+                "u0",
+                "s0",
+                "catA",
+                "0.0",
+                "0.1",
+                "0.2",
+                "0.3",
+                "0.9",
+                "0",
+                "0",
+            ),
+        ],
+    )
+
+    exit_code = cli.main(["export", "--in", str(csv_path)])
+
+    assert exit_code == 1
+
+    stdout = capsys.readouterr().out.strip().splitlines()
+    logs = [json.loads(line) for line in stdout if line]
+    assert logs[0]["event"] == "export.error"
+    assert logs[0]["error"] == "argument_error"
+
+
+def test_export_fails_when_seed_missing(tmp_path: Path, capsys) -> None:
+    csv_path = tmp_path / "scored.csv"
     write_csv(
         csv_path,
         [
@@ -488,61 +587,15 @@ def test_export_missing_seed_fails(tmp_path: Path, capsys) -> None:
     )
 
     exit_code = cli.main(
-        [
-            "export",
-            "--in",
-            str(csv_path),
-            "--out",
-            str(out_path),
-            "--meta",
-            str(meta_path),
-        ]
+        ["export", "--in", str(csv_path), "--out", str(tmp_path / "ref.mat")]
     )
 
     assert exit_code == 1
-    assert not out_path.exists()
-    assert not meta_path.exists()
 
     stdout = capsys.readouterr().out.strip().splitlines()
     logs = [json.loads(line) for line in stdout if line]
     assert logs[0]["event"] == "export.error"
-    assert logs[0]["error"] == "missing_seed"
-
-
-def test_export_missing_meta_fails(tmp_path: Path, capsys) -> None:
-    csv_path = tmp_path / "scored.csv"
-    out_path = tmp_path / "ref.mat"
-    write_csv(
-        csv_path,
-        [
-            ",".join(HEADER),
-            make_row(
-                "2024-01-01T00:00:00Z",
-                "u0",
-                "s0",
-                "catA",
-                "0.0",
-                "0.1",
-                "0.2",
-                "0.3",
-                "0.9",
-                "0",
-                "0",
-            ),
-        ],
-    )
-
-    exit_code = cli.main(
-        ["export", "--in", str(csv_path), "--out", str(out_path), "--seed", "9"]
-    )
-
-    assert exit_code == 1
-    assert not out_path.exists()
-
-    stdout = capsys.readouterr().out.strip().splitlines()
-    logs = [json.loads(line) for line in stdout if line]
-    assert logs[0]["event"] == "export.error"
-    assert logs[0]["error"] == "missing_meta"
+    assert logs[0]["error"] == "argument_error"
 
 
 def test_export_fails_when_header_mismatch(tmp_path: Path, capsys) -> None:
