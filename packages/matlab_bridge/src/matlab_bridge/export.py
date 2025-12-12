@@ -365,6 +365,7 @@ def _write_meta_json(
         "row_count": result.row_count,
         "generated_at": result.generated_at.isoformat().replace("+00:00", "Z"),
         "output_mat": output_name,
+        "metrics_note": "Performance metrics are computed in MATLAB.",
     }
 
     path.parent.mkdir(parents=True, exist_ok=True)

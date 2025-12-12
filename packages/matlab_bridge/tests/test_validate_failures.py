@@ -177,3 +177,63 @@ def test_cli_rejects_non_monotonic_time(tmp_path: Path, capsys) -> None:
     assert logs[-1]["error"] == "validation_error"
     message = str(logs[-1].get("message", ""))
     assert "strictly increasing" in message
+
+
+def test_cli_rejects_zero_reference_setpoint(tmp_path: Path, capsys) -> None:
+    csv_path = tmp_path / "scored.csv"
+    out_path = tmp_path / "ref.mat"
+    meta_path = tmp_path / "meta.json"
+
+    write_csv(
+        csv_path,
+        [
+            ",".join(HEADER),
+            make_row(
+                "2024-01-01T00:00:00Z",
+                "u3",
+                "s3",
+                "catD",
+                "0.0",
+                "0.1",
+                "0.05",
+                "0.20",
+                "0.0",
+                "0",
+                "0",
+            ),
+            make_row(
+                "2024-01-01T00:00:01Z",
+                "u3",
+                "s3",
+                "catD",
+                "0.1",
+                "0.2",
+                "0.06",
+                "0.40",
+                "0.0",
+                "0",
+                "0",
+            ),
+        ],
+    )
+
+    exit_code, logs = _run_cli(
+        [
+            "export",
+            "--in",
+            str(csv_path),
+            "--out",
+            str(out_path),
+            "--meta",
+            str(meta_path),
+            "--seed",
+            "14",
+        ],
+        capsys,
+    )
+
+    assert exit_code == 0
+    assert out_path.exists()
+    assert meta_path.exists()
+    assert logs[0]["event"] == "export.start"
+    assert logs[-1]["event"] == "export.complete"
