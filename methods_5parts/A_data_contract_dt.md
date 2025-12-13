@@ -6,7 +6,6 @@
 
 - 入力：任意の公開CSV（列名は `map.yaml` で契約列にマップ）。
 - 出力：`contract.csv`（**列順固定・UTC**）。
-- 契約CSV（9列、順序固定）  
 - 契約CSV（6列、順序固定）  
   1) `timestamp_utc`, 2) `uid`, 3) `session_id`, 4) `method`, 5) `path`, 6) `op_category`。  
   必須：1,2,4,5,6。`session_id` は任意。

@@ -20,6 +20,7 @@ from .sessionize import (
     SESSION_COLUMNS,
     sessionize_contract,
 )
+from .ait import AitLogProcessor
 
 
 class CommandError(RuntimeError):
@@ -83,6 +84,7 @@ def build_parser() -> argparse.ArgumentParser:
     _register_validate(subparsers)
     _register_sessionize(subparsers)
     _register_deltify(subparsers)
+    _register_process_ait(subparsers)
 
     return parser
 
@@ -125,6 +127,16 @@ def _register_deltify(
     parser.add_argument("--out", required=True, help="Deltified CSV output path")
     parser.add_argument("--meta", required=True, help="Δt metadata JSON output path")
     parser.set_defaults(handler=_handle_deltify)
+
+
+def _register_process_ait(
+    subparsers: argparse._SubParsersAction[argparse.ArgumentParser],
+) -> None:
+    parser = subparsers.add_parser("process-ait", help="Process AIT logs and labels")
+    parser.add_argument("log_file", help="Input Apache Combined Log file")
+    parser.add_argument("label_file", help="Input Label CSV file")
+    parser.add_argument("--out", required=True, help="Output prefix for CSV files")
+    parser.set_defaults(handler=_handle_process_ait)
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -328,6 +340,32 @@ def _handle_deltify(args: argparse.Namespace, logger: JsonLogger) -> dict[str, o
         "fallback_users": meta.get("fallback_users", []),
         "input_sha256": meta["input_sha256"],
     }
+
+
+def _handle_process_ait(
+    args: argparse.Namespace, logger: JsonLogger
+) -> dict[str, object]:
+    log_path = Path(args.log_file)
+    label_path = Path(args.label_file)
+    output_prefix = args.out
+
+    logger.log_start(
+        {
+            "log_file": str(log_path),
+            "label_file": str(label_path),
+            "output_prefix": output_prefix,
+        }
+    )
+
+    if not log_path.exists():
+        raise CommandError("LOG_NOT_FOUND", f"Log file '{log_path}' not found.")
+    if not label_path.exists():
+        raise CommandError("LABEL_NOT_FOUND", f"Label file '{label_path}' not found.")
+
+    processor = AitLogProcessor(log_path, label_path)
+    result = processor.process(output_prefix)
+
+    return result
 
 
 def _load_mapping(path: Path) -> dict[str, str]:

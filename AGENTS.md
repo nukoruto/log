@@ -34,7 +34,7 @@ log/
   - `contract.csv`（契約9列・列順固定・UTC）
   - `sessioned.csv` ＋ `meta_session.json`（`ΔT_session_max`=log空間Otsu/単峰時は肘法）
   - `deltified.csv` ＋ `meta_dt.json`（`Δt`→`log`→`median/MAD z`→`clip ±5`）
-- **必須列（契約9列）**：`timestamp_utc, uid, session_id, method, path, referer, user_agent, ip, op_category`  
+- **必須列（契約6列）**：`timestamp_utc, uid, session_id, method, path, op_category`  
 - **制約**：欠損/非UTC/逆順は**非0終了**。seed により決定論。  
 - **CLI 例**：
   ```bash
