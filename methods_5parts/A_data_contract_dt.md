@@ -7,15 +7,22 @@
 - 入力：任意の公開CSV（列名は `map.yaml` で契約列にマップ）。
 - 出力：`contract.csv`（**列順固定・UTC**）。
 - 契約CSV（9列、順序固定）  
-  1) `timestamp_utc`（ISO8601 または epoch[ms]）, 2) `uid`, 3) `session_id`, 4) `method`, 5) `path`, 6) `referer`, 7) `user_agent`, 8) `ip`, 9) `op_category`。  
-  必須：1,2,3,4,5,6,7,9。UTC以外の時刻は**受け入れ不可**（変換してから投入）。
+- 契約CSV（6列、順序固定）  
+  1) `timestamp_utc`, 2) `uid`, 3) `session_id`, 4) `method`, 5) `path`, 6) `op_category`。  
+  必須：1,2,4,5,6。`session_id` は任意。
 
-- 擬似匿名化：JWT 生値は保存しない。鍵付きハッシュで uid を生成：  
+- ベースID（`uid`）の優先順位と生成式
   $$
-  \mathrm{uid}=\mathrm{hex}\!\big(\mathrm{HMAC}_{\mathrm{SHA256}}(s,\ \mathrm{jwt})\big)
-  \tag{A.1}[7],[8]
+  \mathrm{base}_i=
+  \begin{cases}
+  \mathrm{sid}_i, & \mathrm{sid}_i\neq\varnothing\\
+  H_k(\mathrm{uid}^{\text{raw}}_i), & \mathrm{uid}^{\text{raw}}_i\neq\varnothing\\
+  H_k(\mathrm{sub}_i), & \mathrm{sub}_i\neq\varnothing\\
+  H_k(\mathrm{dc}_i), & \mathrm{dc}_i\neq\varnothing\\
+  H_k(\mathrm{ip}_i\parallel \mathrm{ua}_i), & \text{otherwise}
+  \end{cases} \tag{A.1}
   $$
-  ここで $s$ は秘密鍵。PII保護の指針に従う [9],[10]。
+  ここで $H_k(x)=\mathrm{hex}(\mathrm{HMAC}_{\mathrm{SHA256}}(k, x))$。$k$ は秘密鍵。
 
 - 時刻正規化：ローカル時刻 $t_{\mathrm{local}}$ とオフセット $\mathrm{offset}$ から、
   $$
@@ -30,10 +37,17 @@
 ## A.2 セッション分割：$\Delta T_{\mathrm{session\_max}}$ の自動選定（旧・手法3）
 
 - 入力：`contract.csv`（UTC整列）。(uid, session_id, timestamp) で昇順ソート。`session_id` 欠落や破損時は**時間ギャップ**で推定する。
-- `Δt` の定義：セッション内の時刻列 $\{t(i)\}$ から
+- `Δt` の定義：セッション内の時刻列 $\{t(i)\}$ から $\Delta t(i) = t(i) - t(i-1)$。
+- セッション分割（同一ベースID内）：
   $$
-  \Delta t(i) = t(i) - t(i-1),\quad i\ge 2;\ \ \Delta t(1)=0. \tag{A.3}
+  s_i=
+  \begin{cases}
+  0,& i=1\\
+  s_{i-1}+1,& \mathrm{base}_i\neq \mathrm{base}_{i-1}\ \lor\ \Delta t_i>\theta\\
+  s_{i-1},& \text{otherwise}
+  \end{cases} \tag{A.2}
   $$
+  最終的なセッションキー：$\mathrm{session\_key}_i := H_k(\mathrm{base}_i \parallel s_i)$（または $\mathrm{sid}_i$ をそのまま利用）。
 
 - 対数領域：$x=\log(\Delta t+\varepsilon)$、$\varepsilon=10^{-3}$ 秒固定。
 
