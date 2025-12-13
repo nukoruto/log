@@ -24,9 +24,6 @@ REQUIRED_CONTRACT_COLUMNS: Tuple[str, ...] = (
     "session_id",
     "method",
     "path",
-    "referer",
-    "user_agent",
-    "ip",
     "op_category",
 )
 MAD_SCALE: float = 1.4826
@@ -43,9 +40,6 @@ class ContractRecord:
     session_id: str
     method: str
     path: str
-    referer: str
-    user_agent: str
-    ip: str
     op_category: str
     delta_seconds: float = 0.0
     z_score: float = 0.0
@@ -290,9 +284,6 @@ def _prepare_records(
                 session_id=str(record["session_id"]),
                 method=str(record["method"]),
                 path=str(record["path"]),
-                referer=str(record["referer"]),
-                user_agent=str(record["user_agent"]),
-                ip=str(record["ip"]),
                 op_category=str(record["op_category"]),
             ),
         )
