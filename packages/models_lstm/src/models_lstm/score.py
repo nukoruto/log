@@ -29,6 +29,7 @@ SCORE_COLUMNS: Sequence[str] = (
     "S",
     "flag_cls",
     "flag_dt",
+    "label",
 )
 DEFAULT_WEIGHT_CLS: float = 0.5
 DEFAULT_WEIGHT_TIME: float = 0.5
@@ -278,7 +279,9 @@ def _write_scored_csv(
                 "s_time": float(getattr(record, "s_time", 0.0)),
                 "S": float(getattr(record, "S", 0.0)),
                 "flag_cls": int(getattr(record, "flag_cls", 0)),
+                "flag_cls": int(getattr(record, "flag_cls", 0)),
                 "flag_dt": int(getattr(record, "flag_dt", 0)),
+                "label": getattr(record, "label") or "",
             }
             writer.writerow(row)
             rows.append(row)

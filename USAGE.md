@@ -280,8 +280,8 @@ AITログデータセットを処理するための専用コマンドも `ds_con
 | `--seed` | No | (親コマンド引数として指定推奨) |
 
 **出力ファイル例:**
-- `{out_prefix}.normal.csv`: 正常ログのみ (学習用)
-- `{out_prefix}.test.csv`: 全ログ (評価用、ラベル付き)
+- `{out_prefix}_train_normal.csv`: 正常ログのみ (学習用)
+- `{out_prefix}_test_dataset.csv`: 全ログ (評価用、ラベル付き)
 
 **例:**
 ```bash

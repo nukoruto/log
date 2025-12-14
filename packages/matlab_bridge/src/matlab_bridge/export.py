@@ -37,6 +37,7 @@ class SignalRow:
     ref: float
     y_lstm: float
     y_pid: float
+    label: float
 
 
 SCORED_HEADER = [
@@ -50,7 +51,9 @@ SCORED_HEADER = [
     "s_time",
     "S",
     "flag_cls",
+    "flag_cls",
     "flag_dt",
+    "label",
 ]
 
 
@@ -90,7 +93,9 @@ def export_to_mat(
         time_values,
         ref_values,
         lstm_values,
+        lstm_values,
         pid_values,
+        label_values,
     ) = _build_uniform_signals(rows)
 
     mat_path.parent.mkdir(parents=True, exist_ok=True)
@@ -100,6 +105,7 @@ def export_to_mat(
             "ref": ref_values,
             "y_lstm": lstm_values,
             "y_pid": pid_values,
+            "label": label_values,
             "t": time_values,
         },
     )
@@ -149,6 +155,7 @@ def _read_csv(csv_path: Path) -> list[SignalRow]:
                     ref=ref,
                     y_lstm=y_lstm,
                     y_pid=y_pid,
+                    label=_parse_float(row.get("label", "0"), "label"),
                 )
             )
 
@@ -200,12 +207,11 @@ def _parse_float(value: str | None, column: str) -> float:
     return numeric
 
 
-def _build_uniform_signals(
     rows: list[SignalRow],
-) -> tuple[list[float], list[float], list[float], list[float]]:
+) -> tuple[list[float], list[float], list[float], list[float], list[float]]:
     """Generate a median-Δt grid and resample signals accordingly."""
 
-    times, ref_values, lstm_values, pid_values = _extract_series(rows)
+    times, ref_values, lstm_values, pid_values, label_values = _extract_series(rows)
 
     if len(times) == 1:
         return times, ref_values, lstm_values, pid_values
@@ -215,13 +221,15 @@ def _build_uniform_signals(
         grid,
         _resample_to_grid(times, ref_values, grid),
         _resample_to_grid(times, lstm_values, grid),
+        _resample_to_grid(times, lstm_values, grid),
         _resample_to_grid(times, pid_values, grid),
+        _resample_to_grid(times, label_values, grid),
     )
 
 
 def _extract_series(
     rows: list[SignalRow],
-) -> tuple[list[float], list[float], list[float], list[float]]:
+) -> tuple[list[float], list[float], list[float], list[float], list[float]]:
     """Extract monotonic timestamps and associated signal values."""
 
     base = rows[0].timestamp_utc
@@ -229,6 +237,7 @@ def _extract_series(
     ref_values = [rows[0].ref]
     lstm_values = [rows[0].y_lstm]
     pid_values = [rows[0].y_pid]
+    label_values = [rows[0].label]
     last_timestamp = base
 
     for row in rows[1:]:
@@ -243,9 +252,10 @@ def _extract_series(
         ref_values.append(row.ref)
         lstm_values.append(row.y_lstm)
         pid_values.append(row.y_pid)
+        label_values.append(row.label)
         last_timestamp = timestamp
 
-    return times, ref_values, lstm_values, pid_values
+    return times, ref_values, lstm_values, pid_values, label_values
 
 
 def _compute_time_axis(times: list[float]) -> list[float]:
@@ -307,7 +317,7 @@ def write_mat_v4(path: Path, variables: dict[str, Iterable[float]]) -> None:
     """Write variables to a MATLAB v4 MAT file."""
 
     with path.open("wb") as handle:
-        for name in ("ref", "y_lstm", "y_pid", "t"):
+        for name in ("ref", "y_lstm", "y_pid", "label", "t"):
             values = [float(v) for v in variables[name]]
             _write_matrix(handle, name, values)
 

@@ -26,6 +26,7 @@ REQUIRED_CONTRACT_COLUMNS: Tuple[str, ...] = (
     "path",
     "op_category",
 )
+OPTIONAL_CONTRACT_COLUMNS: Tuple[str, ...] = ("label",)
 MAD_SCALE: float = 1.4826
 EPSILON: float = 1e-8
 GroupKey = Union[Tuple[str, str], str]
@@ -41,6 +42,7 @@ class ContractRecord:
     method: str
     path: str
     op_category: str
+    label: str | None = None
     delta_seconds: float = 0.0
     z_score: float = 0.0
     z_clipped: float = 0.0
@@ -130,7 +132,11 @@ def load_contract_dataframe(path: Path | str) -> List[Dict[str, str]]:
         if missing:
             raise ValueError(f"Missing required columns: {', '.join(missing)}")
 
-        unexpected = [column for column in fieldnames if column not in expected]
+        unexpected = [
+            column
+            for column in fieldnames
+            if column not in expected and column not in OPTIONAL_CONTRACT_COLUMNS
+        ]
         if unexpected or fieldnames != expected:
             problems: List[str] = []
             if unexpected:
@@ -285,6 +291,7 @@ def _prepare_records(
                 method=str(record["method"]),
                 path=str(record["path"]),
                 op_category=str(record["op_category"]),
+                label=str(record["label"]) if "label" in record else None,
             ),
         )
     return prepared

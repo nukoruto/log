@@ -51,21 +51,7 @@ def setup_python_path():
     env["PYTHONPATH"] = os.pathsep.join(src_paths + [current_pythonpath])
     return env
 
-def strip_labels(input_csv, output_csv):
-    """Remove 'label' column from CSV for scoring."""
-    print(f"Preparing data for scoring (stripping labels): {input_csv} -> {output_csv}")
-    with open(input_csv, 'r', encoding='utf-8', newline='') as fin, \
-         open(output_csv, 'w', encoding='utf-8', newline='') as fout:
-        reader = csv.DictReader(fin)
-        if not reader.fieldnames:
-            print("Error: Input CSV is empty or invalid.")
-            sys.exit(1)
-            
-        fieldnames = [f for f in reader.fieldnames if f != 'label']
-        writer = csv.DictWriter(fout, fieldnames=fieldnames)
-        writer.writeheader()
-        for row in reader:
-            writer.writerow({k: v for k, v in row.items() if k != 'label'})
+
 
 def main():
     print("=== AIT Log Pipeline Automation ===")
@@ -132,16 +118,11 @@ def main():
 
     # 4. Score Data
     print("\n--- Step 3: Scoring (models-lstm score) ---")
-    # First strip labels
-    test_nolabel_csv = out_dir / "test_nolabel.csv"
-    strip_labels(test_csv, test_nolabel_csv)
-    
-    scored_csv = out_dir / "scored.csv"
     cmd_score = [
         sys.executable, "-m", "models_lstm.cli",
         "score",
         "--model", str(model_ckpt),
-        "--in", str(test_nolabel_csv),
+        "--in", str(test_csv),
         "--out", str(scored_csv),
         "--seed", seed
     ]
