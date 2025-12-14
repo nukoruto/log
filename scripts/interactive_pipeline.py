@@ -95,6 +95,11 @@ def main():
 
     # 3. Train Model
     print("\n--- Step 2: Training LSTM Model (models-lstm train) ---")
+    print("\n--- Training Configuration ---")
+    epochs = input("Enter Training Epochs [default: 5]: ").strip() or "5"
+    batch_size = input("Enter Batch Size [default: 32]: ").strip() or "32"
+    hidden_dim = input("Enter Hidden Dimension [default: 64]: ").strip() or "64"
+
     run_dir = out_dir / "models"
     cmd_train = [
         sys.executable, "-m", "models_lstm.cli",
@@ -103,11 +108,9 @@ def main():
         "--val", str(train_csv), # Using training data for val as simple default
         "--out", str(run_dir),
         "--seed", seed,
-        "--epochs", "1", # Default to 1 for quick check, maybe prompt? 
-                         # User asked for "entire flow", usually implies a real run. 
-                         # But let's stick to safe defaults or hardcode reasonable small number suitable for demo?
-                         # Let's set to 5 for now.
-        "--epochs", "5" 
+        "--epochs", epochs,
+        "--batch-size", batch_size,
+        "--hidden-dim", hidden_dim,
     ]
     # Check if user wants to customize epochs? For "quickstart" simplicity, fixed is fine.
     run_command(cmd_train, env)
