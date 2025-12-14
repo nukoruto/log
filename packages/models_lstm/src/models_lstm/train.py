@@ -585,8 +585,8 @@ def _train_one_epoch(
 def train_model(config: TrainingConfig) -> Dict[str, Any]:
     """Execute the training loop and persist metrics and checkpoints."""
 
-    if config.epochs <= 0 or config.epochs > 50:
-        raise ValueError("epochs must be in the range [1, 50]")
+    if config.epochs <= 0:
+        raise ValueError("epochs must be positive")
     if config.patience <= 0:
         raise ValueError("patience must be positive")
     if config.batch_size <= 0:
