@@ -1,40 +1,49 @@
-%% 1. 初期化とデータのロード
-clear; clc;
+%% 1. データの読み込み
+clear; clc; close all;
+load('result.mat'); % t, label, ref (スコア), y_lstm などが入っています
 
-% パイプラインが出力した .mat ファイルを読み込む
-% ※パスは実際のファイルの場所に合わせて変更してください
-load('result.mat'); 
+%% 2. 攻撃開始点（立ち上がり）の自動検出
+% labelの差分をとり、正の値(0->1)になっているインデックスを探す
+attack_starts = find(diff(label) > 0);
 
-% 読み込まれる変数の確認:
-% t      : 時間軸 [秒]
-% label  : 正解データ (0=正常, 1=攻撃)
-% ref    : LSTMの総合異常スコア (S)
-% y_lstm : LSTMの時間異常スコア (s_time)
-% y_pid  : 比較用のPID制御出力 (ある場合)
+if isempty(attack_starts)
+    error('攻撃ラベル(1)が見つかりませんでした。データを確認してください。');
+end
 
-%% 2. Simulink用データ形式 (timeseries) への変換
-% ベクトルデータのままだと扱いづらいため、時間軸とセットのオブジェクトに変換します。
+% 最初の攻撃に注目する
+first_attack_idx = attack_starts(1);
+fprintf('最初の攻撃開始インデックス: %d (時刻: %.2f秒)\n', first_attack_idx, t(first_attack_idx));
 
-% (1) 正解ラベル (Ground Truth)
-% 名前を 'GroundTruth' に設定しておくとScopeで分かりやすいです
-ts_label = timeseries(label, t);
-ts_label.Name = 'GroundTruth';
-ts_label.DataInfo.Interpolation = tsdata.interpolation('zoh'); % 0次ホールド(矩形波)
+%% 3. 表示範囲の設定（攻撃の前後 ±500サンプル）
+window_size = 500; 
 
-% (2) LSTM総合異常スコア (Anomaly Score)
-% 変数 'ref' に総合スコア(S)が入っています
-ts_score = timeseries(ref, t);
-ts_score.Name = 'LSTM_Score_S';
-ts_score.DataInfo.Interpolation = tsdata.interpolation('linear'); % 線形補間(滑らか)
+% 配列の範囲外に出ないように調整
+start_idx = max(1, first_attack_idx - window_size);
+end_idx   = min(length(label), first_attack_idx + window_size);
+range_indices = start_idx:end_idx;
 
-% (3) (任意) 時間スコア成分のみを見たい場合
-ts_time_score = timeseries(y_lstm, t);
-ts_time_score.Name = 'LSTM_Time_Component';
+%% 4. 拡大プロット
+figure('Name', 'Attack Zoom Inspector', 'Color', 'w');
 
-%% 3. シミュレーション設定の自動化
-% データの終了時刻をシミュレーション終了時間にセットするための変数
-SimStopTime = t(end);
+% 上段: 正解ラベル (Ground Truth)
+subplot(2,1,1);
+plot(t(range_indices), label(range_indices), 'r-', 'LineWidth', 2);
+title('正解ラベル (Ground Truth): 0=正常, 1=攻撃');
+grid on;
+ylim([-0.2, 1.2]); % 0と1が見やすいように
+ylabel('Label');
 
-fprintf('データのロード完了。\n');
-fprintf('シミュレーション時間: %.2f 秒\n', SimStopTime);
-fprintf('Simulinkモデルの "終了時間 (Stop Time)" に変数名 SimStopTime と入力してください。\n');
+% 下段: 異常スコア (Anomaly Score)
+subplot(2,1,2);
+plot(t(range_indices), ref(range_indices), 'b-', 'LineWidth', 1.5);
+hold on;
+% 攻撃開始位置に縦線を引いてわかりやすくする
+xline(t(first_attack_idx), 'k--', 'Attack Start'); 
+title('異常検知スコア (Blue Line)');
+grid on;
+ylabel('Score');
+xlabel('Time [sec]');
+
+% ※学習不足で値がおかしいとのことですが、
+%   ここで「ラベルが上がった瞬間に、青線が少しでも反応しているか（遅れているか）」
+%   を確認できれば、実験環境としては成功です。
