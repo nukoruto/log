@@ -222,11 +222,11 @@ def _build_uniform_signals(
     grid = _compute_time_axis(times)
     return (
         grid,
-        _resample_to_grid(times, ref_values, grid),
-        _resample_to_grid(times, lstm_values, grid),
-        _resample_to_grid(times, lstm_values, grid),
-        _resample_to_grid(times, pid_values, grid),
-        _resample_to_grid(times, label_values, grid),
+        _resample_to_grid(times, ref_values, grid, mode="linear"),
+        _resample_to_grid(times, lstm_values, grid, mode="linear"),
+        _resample_to_grid(times, lstm_values, grid, mode="linear"),
+        _resample_to_grid(times, pid_values, grid, mode="nearest"),
+        _resample_to_grid(times, label_values, grid, mode="nearest"),
     )
 
 
@@ -277,9 +277,20 @@ def _compute_time_axis(times: list[float]) -> list[float]:
 
 
 def _resample_to_grid(
-    times: list[float], values: list[float], grid: list[float]
+    times: list[float],
+    values: list[float],
+    grid: list[float],
+    *,
+    mode: str = "linear",
 ) -> list[float]:
-    """Linearly interpolate values onto the provided grid."""
+    """Resample values onto the provided grid using the specified interpolation mode.
+
+    Args:
+        times: Monotonic timestamps.
+        values: Signal values corresponding to timestamps.
+        grid: Target time grid.
+        mode: Interpolation mode, either "linear" or "nearest".
+    """
 
     if len(times) != len(values):  # pragma: no cover - defensive
         raise ExportError("Time and value arrays must be the same length")
@@ -313,9 +324,15 @@ def _resample_to_grid(
             result.append(end_value)
             continue
 
-        ratio = (point - start_time) / (end_time - start_time)
-        interpolated = start_value + ratio * (end_value - start_value)
-        result.append(interpolated)
+        if mode == "nearest":
+            if (point - start_time) < (end_time - point):
+                result.append(start_value)
+            else:
+                result.append(end_value)
+        else:
+            ratio = (point - start_time) / (end_time - start_time)
+            interpolated = start_value + ratio * (end_value - start_value)
+            result.append(interpolated)
 
     return result
 
