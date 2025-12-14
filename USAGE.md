@@ -20,6 +20,27 @@
 
 データ処理パイプラインは以下の順序で実行されます。詳細は `scripts/quickstart.sh` を参照してください。
 
+### Quickstart Script
+
+`scripts/quickstart.sh` は、上記のパイプラインのうち、データ生成から前処理 (`ds-contract`) までを自動化するスクリプトです。
+
+**使用法:**
+```bash
+./scripts/quickstart.sh [OUTPUT_DIR]
+```
+
+- `OUTPUT_DIR` (任意): 出力ディレクトリ。指定しない場合は `artifacts/quickstart` が使用されます。
+- 環境変数 `QUICKSTART_SEED` で乱数シードを指定可能です（デフォルト: 202401）。
+
+**例:**
+```bash
+# デフォルトディレクトリに出力
+./scripts/quickstart.sh
+
+# 指定ディレクトリに出力
+./scripts/quickstart.sh data/my_experiment
+```
+
 ```mermaid
 graph TD
     RawCSV[Raw CSV] -->|ds-contract validate| ContractCSV[Contract CSV]
