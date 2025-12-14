@@ -49,6 +49,7 @@ def setup_python_path():
     env = os.environ.copy()
     current_pythonpath = env.get("PYTHONPATH", "")
     env["PYTHONPATH"] = os.pathsep.join(src_paths + [current_pythonpath])
+    env["CUBLAS_WORKSPACE_CONFIG"] = ":4096:8"
     return env
 
 

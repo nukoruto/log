@@ -51,7 +51,6 @@ SCORED_HEADER = [
     "s_time",
     "S",
     "flag_cls",
-    "flag_cls",
     "flag_dt",
     "label",
     "attack_type",
@@ -89,6 +88,8 @@ def export_to_mat(
     rows = _read_csv(csv_path)
     if not rows:
         raise ExportError("scored.csv must contain at least one record")
+
+    rows.sort(key=lambda row: row.timestamp_utc)
 
     (
         time_values,
@@ -208,6 +209,7 @@ def _parse_float(value: str | None, column: str) -> float:
     return numeric
 
 
+def _build_uniform_signals(
     rows: list[SignalRow],
 ) -> tuple[list[float], list[float], list[float], list[float], list[float]]:
     """Generate a median-Δt grid and resample signals accordingly."""
@@ -243,7 +245,7 @@ def _extract_series(
 
     for row in rows[1:]:
         timestamp = row.timestamp_utc
-        if timestamp <= last_timestamp:
+        if timestamp < last_timestamp:
             raise ExportError(
                 "t must be strictly increasing; check timestamp_utc ordering"
             )
@@ -262,7 +264,11 @@ def _extract_series(
 def _compute_time_axis(times: list[float]) -> list[float]:
     """Compute an evenly spaced time axis using the median Δt."""
 
-    deltas = [current - previous for previous, current in zip(times[:-1], times[1:])]
+    deltas = [
+        current - previous
+        for previous, current in zip(times[:-1], times[1:])
+        if current > previous
+    ]
     step = median(deltas)
     if step <= 0:
         raise ExportError("Median Δt must be positive")

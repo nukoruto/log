@@ -138,16 +138,16 @@ def load_contract_dataframe(path: Path | str) -> List[Dict[str, str]]:
             for column in fieldnames
             if column not in expected and column not in OPTIONAL_CONTRACT_COLUMNS
         ]
-        if unexpected or fieldnames != expected:
+        if unexpected or fieldnames[: len(expected)] != expected:
             problems: List[str] = []
             if unexpected:
                 problems.append(f"unexpected columns: {', '.join(unexpected)}")
-            if fieldnames != expected:
+            if fieldnames[: len(expected)] != expected:
                 problems.append(
                     "header order must exactly match contract specification"
                 )
                 problems.append(
-                    f"expected header order: {', '.join(expected)}; got: {', '.join(fieldnames)}"
+                    f"expected header start: {', '.join(expected)}; got: {', '.join(fieldnames)}"
                 )
             raise ValueError(
                 "Invalid contract CSV header: " + "; ".join(dict.fromkeys(problems))
