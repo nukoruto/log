@@ -118,6 +118,7 @@ def main():
 
     # 4. Score Data
     print("\n--- Step 3: Scoring (models-lstm score) ---")
+    scored_csv = out_dir / "scored.csv"
     cmd_score = [
         sys.executable, "-m", "models_lstm.cli",
         "score",
