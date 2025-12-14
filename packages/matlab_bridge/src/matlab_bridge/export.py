@@ -54,6 +54,7 @@ SCORED_HEADER = [
     "flag_cls",
     "flag_dt",
     "label",
+    "attack_type",
 ]
 
 

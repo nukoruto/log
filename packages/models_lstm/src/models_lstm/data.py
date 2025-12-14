@@ -26,7 +26,7 @@ REQUIRED_CONTRACT_COLUMNS: Tuple[str, ...] = (
     "path",
     "op_category",
 )
-OPTIONAL_CONTRACT_COLUMNS: Tuple[str, ...] = ("label",)
+OPTIONAL_CONTRACT_COLUMNS: Tuple[str, ...] = ("label", "attack_type")
 MAD_SCALE: float = 1.4826
 EPSILON: float = 1e-8
 GroupKey = Union[Tuple[str, str], str]
@@ -43,6 +43,7 @@ class ContractRecord:
     path: str
     op_category: str
     label: str | None = None
+    attack_type: str | None = None
     delta_seconds: float = 0.0
     z_score: float = 0.0
     z_clipped: float = 0.0
@@ -292,6 +293,7 @@ def _prepare_records(
                 path=str(record["path"]),
                 op_category=str(record["op_category"]),
                 label=str(record["label"]) if "label" in record else None,
+                attack_type=str(record["attack_type"]) if "attack_type" in record else None,
             ),
         )
     return prepared

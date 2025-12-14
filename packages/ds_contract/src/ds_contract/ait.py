@@ -29,6 +29,7 @@ class LogEntry(NamedTuple):
     op_category: str
     label_anomaly: str
     label_attack: str
+    attack_type: str
 
 
 class AitLogProcessor:
@@ -52,7 +53,7 @@ class AitLogProcessor:
         train_file.parent.mkdir(parents=True, exist_ok=True)
 
         cols = ["timestamp_utc", "uid", "session_id", "method", "path", "op_category"]
-        cols_test = cols + ["label"]
+        cols_test = cols + ["label", "attack_type"]
 
         count_total = 0
         count_train = 0
@@ -92,14 +93,18 @@ class AitLogProcessor:
                 # If label_row has 1 col, use it. If 2, use both.
                 if len(label_row) >= 2:
                     is_normal = (label_row[0].strip() == "0") and (label_row[1].strip() == "0")
+                    # If not normal, use second column as attack name if available
+                    attack_val = label_row[1].strip() if not is_normal else ""
                 elif len(label_row) == 1:
                     is_normal = (label_row[0].strip() == "0")
+                    attack_val = "anomaly" if not is_normal else ""
                 else:
                     is_normal = False # Fallback
+                    attack_val = "unknown"
 
                 final_label = "0" if is_normal else "1"
                 
-                entry = self._transform_entry(parsed_log, final_label)
+                entry = self._transform_entry(parsed_log, final_label, attack_val)
                 
                 row_dict = {
                     "timestamp_utc": entry.timestamp_utc,
@@ -113,6 +118,7 @@ class AitLogProcessor:
                 # 4. Write to Test CSV (Combined) - "Based on that CSV"
                 row_test = row_dict.copy()
                 row_test["label"] = entry.label_anomaly
+                row_test["attack_type"] = entry.attack_type
                 writer_test.writerow(row_test)
                 count_total += 1
                 
@@ -133,7 +139,7 @@ class AitLogProcessor:
             return None
         return match.groupdict()
 
-    def _transform_entry(self, raw: dict[str, str], label: str) -> LogEntry:
+    def _transform_entry(self, raw: dict[str, str], label: str, attack_type: str) -> LogEntry:
         # timestamp conversion
         # "[29/Feb/2020:00:00:02 +0000]" -> 2020-02-29T00:00:02+00:00
         ts_str = raw["timestamp"]
@@ -159,6 +165,7 @@ class AitLogProcessor:
             op_category=op_category,
             label_anomaly=label,
             label_attack="",
+            attack_type=attack_type,
         )
 
     def _derive_op_category(self, method: str, path: str) -> str:

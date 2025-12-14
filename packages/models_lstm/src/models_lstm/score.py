@@ -30,6 +30,7 @@ SCORE_COLUMNS: Sequence[str] = (
     "flag_cls",
     "flag_dt",
     "label",
+    "attack_type",
 )
 DEFAULT_WEIGHT_CLS: float = 0.5
 DEFAULT_WEIGHT_TIME: float = 0.5
@@ -282,6 +283,7 @@ def _write_scored_csv(
                 "flag_cls": int(getattr(record, "flag_cls", 0)),
                 "flag_dt": int(getattr(record, "flag_dt", 0)),
                 "label": getattr(record, "label") or "",
+                "attack_type": getattr(record, "attack_type", "") or "",
             }
             writer.writerow(row)
             rows.append(row)
