@@ -45,69 +45,86 @@ class AitLogProcessor:
         Returns:
             Dictionary with counts of generated rows.
         """
-        train_rows = []
-        test_rows = []
+        train_file = Path(f"{output_prefix}_train_normal.csv")
+        test_file = Path(f"{output_prefix}_test_dataset.csv")
+        
+        # Ensure output directory exists
+        train_file.parent.mkdir(parents=True, exist_ok=True)
+
+        cols = ["timestamp_utc", "uid", "session_id", "method", "path", "op_category"]
+        cols_test = cols + ["label"]
+
+        count_total = 0
+        count_train = 0
 
         with self.log_file.open("r", encoding="utf-8") as f_log, \
-             self.label_file.open("r", encoding="utf-8") as f_labels:
+             self.label_file.open("r", encoding="utf-8") as f_labels, \
+             train_file.open("w", newline="", encoding="utf-8") as f_out_train, \
+             test_file.open("w", newline="", encoding="utf-8") as f_out_test:
             
-            # Label file is CSV without header usually, or maybe with header. 
-            # User said "CSV format: time_anomaly_flag, attack_flag".
-            # We assume no header or we handle header if present. 
-            # Ideally we read line by line for 1-to-1 correspondence.
+            writer_train = csv.DictWriter(f_out_train, fieldnames=cols)
+            writer_test = csv.DictWriter(f_out_test, fieldnames=cols_test)
             
-            # Use iterator to read files line by line simultaneously
+            writer_train.writeheader()
+            writer_test.writeheader()
+            
             log_iter = iter(f_log)
-            # Check if label file has header? User didn't specify. 
-            # Assuming pure data based on "row-by-row correspondence".
-            # But let's peek? No, safe to assume standard simple CSV.
             label_reader = csv.reader(f_labels)
             
             for i, (log_line, label_row) in enumerate(zip(log_iter, label_reader), start=1):
+                # 1. Parse Log (Left)
                 parsed_log = self._parse_log_line(log_line)
                 if not parsed_log:
-                     # If log parsing fails, what do we do? Skip or error? 
-                     # For now, let's skip but warn.
-                     # Actually, "1-to-1 correspondence" implies strict matching.
-                     # if we skip log, we must skip label.
                      print(f"Warning: Failed to parse log line {i}: {log_line.strip()}")
                      continue
                 
-                # Parse labels
-                # label_row should be [time_anomaly, attack_flag]
-                # "label: 0,0 -> 0 (normal), else 1 (abnormal)"
-                if len(label_row) < 2:
-                    print(f"Warning: Invalid label format at line {i}: {label_row}")
+                # 2. Parse Label (Right)
+                if not label_row:
                     continue
-                
-                # Check for header in first row?
+                # Skip header if present and not numeric
                 if i == 1 and not label_row[0].isdigit():
-                     # Skip header
                      continue
 
-                is_normal = (label_row[0].strip() == "0") and (label_row[1].strip() == "0")
-                final_label = "0" if is_normal else "1"
+                # 3. Glue and Transform
+                # Check label: 0,0 means Normal. Anything else is Anomaly.
+                # Adjust index logic if label_row length varies? 
+                # User mentioned "Normal, Abnormal label only" -> assuming standard logic holds.
+                # If label_row has 1 col, use it. If 2, use both.
+                if len(label_row) >= 2:
+                    is_normal = (label_row[0].strip() == "0") and (label_row[1].strip() == "0")
+                elif len(label_row) == 1:
+                    is_normal = (label_row[0].strip() == "0")
+                else:
+                    is_normal = False # Fallback
 
+                final_label = "0" if is_normal else "1"
+                
                 entry = self._transform_entry(parsed_log, final_label)
                 
-                # Add to test dataset (ALL logs)
-                test_rows.append(entry)
+                row_dict = {
+                    "timestamp_utc": entry.timestamp_utc,
+                    "uid": entry.uid,
+                    "session_id": entry.session_id,
+                    "method": entry.method,
+                    "path": entry.path,
+                    "op_category": entry.op_category,
+                }
                 
-                # Add to train dataset (NORMAL logs only)
+                # 4. Write to Test CSV (Combined) - "Based on that CSV"
+                row_test = row_dict.copy()
+                row_test["label"] = entry.label_anomaly
+                writer_test.writerow(row_test)
+                count_total += 1
+                
+                # 5. Filter for Train CSV
                 if is_normal:
-                    train_rows.append(entry)
-
-        # Write outputs
-        train_file = Path(f"{output_prefix}_train_normal.csv")
-        test_file = Path(f"{output_prefix}_test_dataset.csv")
-
-        self._write_csv(train_file, train_rows, include_label=False)
-        self._write_csv(test_file, test_rows, include_label=True)
+                    writer_train.writerow(row_dict)
+                    count_train += 1
 
         return {
-            "total_processed": len(test_rows),
-            "train_count": len(train_rows),
-            "test_count": len(test_rows)
+            "total_processed": count_total,
+            "train_count": count_train,
+            "test_count": count_total
         }
 
     def _parse_log_line(self, line: str) -> dict[str, str] | None:
@@ -167,25 +184,4 @@ class AitLogProcessor:
         # OTHER: それ以外
         return "OTHER"
 
-    def _write_csv(self, path: Path, rows: list[LogEntry], include_label: bool):
-        fieldnames = [
-            "timestamp_utc", "uid", "session_id", "method", "path", "op_category"
-        ]
-        if include_label:
-            fieldnames.append("label")
 
-        with path.open("w", newline="", encoding="utf-8") as f:
-            writer = csv.DictWriter(f, fieldnames=fieldnames)
-            writer.writeheader()
-            for row in rows:
-                data = {
-                    "timestamp_utc": row.timestamp_utc,
-                    "uid": row.uid,
-                    "session_id": row.session_id,
-                    "method": row.method,
-                    "path": row.path,
-                    "op_category": row.op_category,
-                }
-                if include_label:
-                    data["label"] = row.label_anomaly
-                writer.writerow(data)

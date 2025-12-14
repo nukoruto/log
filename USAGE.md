@@ -34,12 +34,28 @@
 
 **例:**
 ```bash
-# デフォルトディレクトリに出力
-./scripts/quickstart.sh
-
-# 指定ディレクトリに出力
 ./scripts/quickstart.sh data/my_experiment
 ```
+
+### Interactive Pipeline Script
+
+`scripts/interactive_pipeline.py` は、既存のAIT形式ログファイル (`access.log`) と正解ラベル (`labels.csv`) を入力とし、前処理からMATLAB形式へのエクスポートまでを一気通貫で行う対話型スクリプトです。
+
+**使用法:**
+```bash
+python scripts/interactive_pipeline.py
+```
+実行すると、以下の項目を対話的に入力するよう求められます。
+1. `access.log` のパス
+2. `labels.csv` のパス
+3. 出力ディレクトリ
+4. 乱数シード
+
+このスクリプトは内部で以下のステップを自動実行します:
+1. `ds_contract process-ait`: ログの前処理
+2. `models_lstm train`: モデル学習
+3. `models_lstm score`: データのスコアリング（ラベル列の除外処理含む）
+4. `matlab_bridge export`: MATLAB形式への変換
 
 ```mermaid
 graph TD
@@ -259,7 +275,7 @@ AITログデータセットを処理するための専用コマンドも `ds_con
 | 引数 | 必須 | 説明 |
 | :--- | :---: | :--- |
 | `log_file` | Yes | 入力となるApache Combined Logファイル |
-| `label_file` | Yes | 正解ラベルCSVファイル |
+| `label_file` | Yes | 正解ラベルファイル (.log推奨, 内容は `0,0` 形式) |
 | `--out` | Yes | 出力ファイルのプレフィックス (例: `data/ait_`) |
 | `--seed` | No | (親コマンド引数として指定推奨) |
 

@@ -134,7 +134,7 @@ def _register_process_ait(
 ) -> None:
     parser = subparsers.add_parser("process-ait", help="Process AIT logs and labels")
     parser.add_argument("log_file", help="Input Apache Combined Log file")
-    parser.add_argument("label_file", help="Input Label CSV file")
+    parser.add_argument("label_file", help="Input Label file (e.g. .log, .csv)")
     parser.add_argument("--out", required=True, help="Output prefix for CSV files")
     parser.set_defaults(handler=_handle_process_ait)
 
