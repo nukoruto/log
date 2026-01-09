@@ -10,10 +10,12 @@ __all__ = [
     "compute_linear_quantile",
     "build_category_thresholds",
     "save_metrics",
+    "apply_point_adjustment",
 ]
 
 _REQUIRED_FIELDS: Sequence[str] = (
     "f1",
+    "f1_adjusted",
     "pr_auc",
     "roc_auc",
     "detection_delay",
@@ -147,3 +149,49 @@ def _to_serialisable(value: Any) -> Any:
     if isinstance(value, Path):
         return str(value)
     return value
+
+
+def apply_point_adjustment(
+    targets: Sequence[int], predictions: Sequence[int]
+) -> List[int]:
+    """Apply the point adjustment protocol to predictions.
+
+    If a contiguous anomaly segment in ``targets`` is hit by at least one
+    predicted anomaly in ``predictions``, the entire segment in the
+    predictions is adjusted to 1 (anomaly).
+
+    Args:
+        targets: Ground truth binary labels (0 or 1).
+        predictions: Predicted binary labels (0 or 1).
+
+    Returns:
+        A new list of adjusted predictions.
+
+    Raises:
+        ValueError: If input lengths do not match.
+    """
+    if len(targets) != len(predictions):
+        raise ValueError("targets and predictions must have the same length")
+
+    adjusted = list(predictions)
+    n = len(targets)
+    i = 0
+    while i < n:
+        if targets[i] == 1:
+            # Found start of an anomaly segment
+            j = i
+            has_detection = False
+            while j < n and targets[j] == 1:
+                if adjusted[j] == 1:
+                    has_detection = True
+                j += 1
+            
+            # If any point in this segment was detected, set all to 1
+            if has_detection:
+                for k in range(i, j):
+                    adjusted[k] = 1
+            i = j
+        else:
+            i += 1
+            
+    return adjusted

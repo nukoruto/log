@@ -21,7 +21,7 @@ from .data import (
     load_contract_dataframe,
     OpCategoryEncoder,
 )
-from .metrics import build_category_thresholds, save_metrics
+from .metrics import apply_point_adjustment, build_category_thresholds, save_metrics
 from .model import LSTMEventPredictor
 from .utils import resolve_device, set_deterministic_mode
 
@@ -496,6 +496,9 @@ def _compute_validation_metrics(
         for prob_vector in probability_vectors
     ]
 
+    adjusted_predictions = apply_point_adjustment(target_indices, predictions)
+    f1_adjusted = _micro_f1(target_indices, adjusted_predictions)
+
     f1_score = _micro_f1(target_indices, predictions)
     pr_auc = _average_over_classes(
         target_indices, probability_vectors, _binary_average_precision
@@ -514,6 +517,7 @@ def _compute_validation_metrics(
 
     return {
         "f1": f1_score,
+        "f1_adjusted": f1_adjusted,
         "pr_auc": pr_auc,
         "roc_auc": roc_auc,
         "detection_delay": detection_delay,
