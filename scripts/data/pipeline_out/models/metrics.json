@@ -3,6 +3,7 @@
   "detection_delay": 56.4,
   "device": "cuda:0",
   "f1": 0.7165474325868856,
+  "f1_adjusted": 0.7864087259591641,
   "history": [
     {
       "epoch": 1.0,
