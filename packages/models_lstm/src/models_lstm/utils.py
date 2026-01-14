@@ -39,24 +39,38 @@ def _normalize_gpu_label(label: str) -> str:
 def resolve_device() -> torch.device:
     """Resolve the preferred ``torch.device`` from the GPU_MODE environment."""
 
-    mode = os.environ.get("GPU_MODE", "cpu").strip().lower()
-    if mode not in _KNOWN_GPU_MODES:
+    mode = os.environ.get("GPU_MODE", "").strip().lower()
+    
+    # If explicit CPU requested
+    if mode == "cpu":
         return torch.device("cpu")
-    if mode == "cpu" or not torch.cuda.is_available():
+
+    # If specific GPU requested (rtx6000, rtx4060)
+    if mode in _KNOWN_GPU_MODES and mode != "cpu":
+        # Keep existing logic for specific targeting if needed, 
+        # or just fall through to general CUDA check if we treat them as "use best available"
+        # For now, let's keep the target index logic for specific modes
+        pass
+    else:
+        # Auto mode (default): use CUDA if available
+        if torch.cuda.is_available():
+            return torch.device("cuda")
         return torch.device("cpu")
 
     target_index: int | None = None
-    device_count = torch.cuda.device_count()
-    normalized_mode = _normalize_gpu_label(mode)
-    for index in range(device_count):
-        name = torch.cuda.get_device_name(index)
-        normalized_name = _normalize_gpu_label(name)
-        if normalized_mode and normalized_mode in normalized_name:
-            target_index = index
-            break
-
-    if target_index is None:
-        target_index = 0 if device_count > 0 else None
+    if torch.cuda.is_available():
+        device_count = torch.cuda.device_count()
+        normalized_mode = _normalize_gpu_label(mode)
+        for index in range(device_count):
+            name = torch.cuda.get_device_name(index)
+            normalized_name = _normalize_gpu_label(name)
+            if normalized_mode and normalized_mode in normalized_name:
+                target_index = index
+                break
+        
+        if target_index is None and device_count > 0:
+             # Fallback to first device if specific name not found but mode was valid (shouldn't happen with strict check but good for safety)
+             target_index = 0
 
     if target_index is None:
         return torch.device("cpu")
