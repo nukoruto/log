@@ -1,0 +1,133 @@
+============================= test session starts =============================
+platform win32 -- Python 3.12.10, pytest-8.2.2, pluggy-1.6.0 -- D:\newprogram_files_d\python\python.exe
+cachedir: .pytest_cache
+rootdir: D:\kosen\sotuken\log\packages\models_lstm
+configfile: pyproject.toml
+plugins: hydra-core-1.3.2
+collecting ... collected 2 items
+
+packages\models_lstm\tests\test_score_extended.py::test_score_generates_metrics_and_plot FAILED
+packages\models_lstm\tests\test_score_extended.py::test_metrics_calculation FAILED
+
+================================== FAILURES ===================================
+____________________ test_score_generates_metrics_and_plot ____________________
+
+mock_load = <MagicMock name='load_contract_dataframe' id='2929815901040'>
+mock_build = <MagicMock name='_build_model' id='2929815904928'>
+tmp_path = WindowsPath('C:/Users/df360/AppData/Local/Temp/pytest-of-df360/pytest-1/test_score_generates_metrics_a0')
+
+    @patch("models_lstm.score._build_model")
+    @patch("models_lstm.score.load_contract_dataframe")
+    def test_score_generates_metrics_and_plot(mock_load, mock_build, tmp_path):
+        # Setup
+        input_path = tmp_path / "input.csv"
+        model_path = tmp_path / "model.pt"
+        output_path = tmp_path / "run" / "scored.csv"
+    
+        # Create dummy input data
+        records = [
+>           ContractRecord(
+                uid="u1", session_id="s1",
+                timestamp_utc=Any, # Mocked effectively by load return
+                op_category="A", row_index=1,
+                ip_address="1.2.3.4", user_agent="Mozilla",
+                label="0"
+            ),
+            ContractRecord(
+                uid="u1", session_id="s1",
+                timestamp_utc=Any,
+                op_category="B", row_index=2,
+                ip_address="1.2.3.4", user_agent="Mozilla",
+                label="0"
+            ),
+             ContractRecord(
+                uid="u1", session_id="s1",
+                timestamp_utc=Any,
+                op_category="C", row_index=3,
+                ip_address="1.2.3.4", user_agent="Mozilla",
+                label="1"
+            )
+        ]
+E       TypeError: ContractRecord.__init__() got an unexpected keyword argument 'row_index'
+
+packages\models_lstm\tests\test_score_extended.py:48: TypeError
+__________________________ test_metrics_calculation ___________________________
+
+mock_score_records = <MagicMock name='_score_records' id='2929815910208'>
+mock_prepare = <MagicMock name='_prepare_records' id='2929816111296'>
+mock_load = <MagicMock name='load_contract_dataframe' id='2929816115088'>
+mock_build = <MagicMock name='_build_model' id='2929816118880'>
+tmp_path = WindowsPath('C:/Users/df360/AppData/Local/Temp/pytest-of-df360/pytest-1/test_metrics_calculation0')
+
+    @patch("models_lstm.score._build_model")
+    @patch("models_lstm.score.load_contract_dataframe")
+    @patch("models_lstm.score._prepare_records")
+    @patch("models_lstm.score._score_records")
+    def test_metrics_calculation(mock_score_records, mock_prepare, mock_load, mock_build, tmp_path):
+        input_path = tmp_path / "input.csv"
+        model_path = tmp_path / "model.pt"
+        output_path = tmp_path / "run" / "scored.csv"
+    
+        # Mock return values
+        mock_load.return_value = []
+    
+        # Create records with specific s_cls values to verify math
+        # Rec 1: s_cls = 0.1
+        # Rec 2: s_cls = 0.5
+        # Rec 3: s_cls = 0.9
+        r1 = MagicMock(spec=ContractRecord)
+        r1.s_cls = 0.1
+        r1.timestamp_utc = MagicMock()
+        r1.uid = "u1"
+        r1.session_id = "s1"
+        r1.op_category = "A"
+        r1.z_clipped = 0.0
+    
+        r2 = MagicMock(spec=ContractRecord)
+        r2.s_cls = 0.5
+        r2.timestamp_utc = MagicMock()
+        r2.op_category = "B"
+        r2.z_clipped = 0.0
+    
+        r3 = MagicMock(spec=ContractRecord)
+        r3.s_cls = 0.9
+        r3.timestamp_utc = MagicMock()
+        r3.op_category = "C"
+        r3.z_clipped = 0.0
+    
+        mock_prepare.return_value = [r1, r2, r3]
+    
+        checkpoint = create_mock_checkpoint()
+    
+        # Run
+>       result = score_dataset(
+            model_path=model_path,
+            input_path=input_path,
+            output_path=output_path,
+            seed=42,
+            checkpoint=checkpoint
+        )
+
+packages\models_lstm\tests\test_score_extended.py:116: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+packages\models_lstm\src\models_lstm\score.py:348: in score_dataset
+    scored_rows = _write_scored_csv(records, output_path)
+packages\models_lstm\src\models_lstm\score.py:283: in _write_scored_csv
+    "uid": record.uid,
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+self = <MagicMock spec='ContractRecord' id='2929816176160'>, name = 'uid'
+
+    def __getattr__(self, name):
+        if name in {'_mock_methods', '_mock_unsafe'}:
+            raise AttributeError(name)
+        elif self._mock_methods is not None:
+            if name not in self._mock_methods or name in _all_magics:
+>               raise AttributeError("Mock object has no attribute %r" % name)
+E               AttributeError: Mock object has no attribute 'uid'
+
+D:\newprogram_files_d\python\Lib\unittest\mock.py:660: AttributeError
+=========================== short test summary info ===========================
+FAILED packages\models_lstm\tests\test_score_extended.py::test_score_generates_metrics_and_plot
+FAILED packages\models_lstm\tests\test_score_extended.py::test_metrics_calculation
+============================== 2 failed in 3.51s ==============================
