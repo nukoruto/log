@@ -347,30 +347,43 @@ def score_dataset(
 
     scored_rows = _write_scored_csv(records, output_path)
 
-    # Compute additional metrics (IAE, ISE, ITAE)
-    # s_cls corresponds to e(t) = 1.0 - p(actual_key)
-    s_cls_values = [float(getattr(record, "s_cls", 0.0)) for record in records]
+    # Compute normalized metrics (IAE, ISE, ITAE)
+    # We calculate these per session and then take the average over all sessions.
+    # ITAE uses relative time step 't' from the start of the session (0, 1, 2...).
     
-    iae = sum(abs(val) for val in s_cls_values)
-    ise = sum(val * val for val in s_cls_values)
-    
-    # ITAE calculation: integral of time * absolute error
-    # We use the cumulative time from the first record as 't'.
-    # Since records are sorted by (uid, session_id, timestamp), we should probably 
-    # reset time per session or use global relative time. 
-    # D.5 says "s_cls,i = ...". D.6 mentions "e(t)". 
-    # Typically ITAE is for a response step. Here we stream logs.
-    # We'll treat 't' as index 0, 1, 2... for simplicity or relative time if needed.
-    # Requirement D.6 Procedure 4 implies e(t) is a continuous waveform.
-    # Let's use index as proxy for time t if actual relative seconds are complex across sessions.
-    # Or better, use actual delta seconds accumulation if we treat the whole dataset as one trace?
-    # But dataset has multiple sessions. 
-    # Let's compute global ITAE as sum over all sessions? Or average per session?
-    # Requirement: "IAE, ISE, ITAEを適用することが本題"
-    # Let's use simple index-based t for the whole concatenated sequence for now, 
-    # or better, simple enumeration if it represents a continuous "wave" of error.
-    
-    itae = sum(i * abs(val) for i, val in enumerate(s_cls_values))
+    grouped_sessions: Dict[tuple[str, str], List[ContractRecord]] = {}
+    for record in records:
+        key = (record.uid, record.session_id)
+        grouped_sessions.setdefault(key, []).append(record)
+
+    total_iae = 0.0
+    total_ise = 0.0
+    total_itae = 0.0
+    num_sessions = len(grouped_sessions)
+
+    for session_records in grouped_sessions.values():
+        # Sort just in case, though they should be sorted by _prepare_records
+        session_records.sort(key=lambda r: r.timestamp_utc)
+        
+        session_iae = 0.0
+        session_ise = 0.0
+        session_itae = 0.0
+        
+        for t, record in enumerate(session_records):
+            val = float(getattr(record, "s_cls", 0.0))
+            abs_val = abs(val)
+            
+            session_iae += abs_val
+            session_ise += val * val
+            session_itae += t * abs_val
+            
+        total_iae += session_iae
+        total_ise += session_ise
+        total_itae += session_itae
+
+    iae = total_iae / num_sessions if num_sessions > 0 else 0.0
+    ise = total_ise / num_sessions if num_sessions > 0 else 0.0
+    itae = total_itae / num_sessions if num_sessions > 0 else 0.0
 
     metrics: Dict[str, Any] = {
         "iae": iae,
