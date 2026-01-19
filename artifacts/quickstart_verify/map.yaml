@@ -1,0 +1,9 @@
+timestamp_utc: timestamp
+uid: user
+session_id: session
+method: method
+path: path
+R: referer
+user_agent: user_agent
+ip: ip
+op_category: category

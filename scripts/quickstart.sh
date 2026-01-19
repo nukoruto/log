@@ -46,20 +46,85 @@ uid: user
 session_id: session
 method: method
 path: path
-referer: referer
 user_agent: user_agent
 ip: ip
 op_category: category
 MAP
 
-run_step() {
+run_contract() {
   local subcommand="$1"
   shift
   "${PYTHON_BIN}" -m ds_contract.cli --seed "${SEED}" "${subcommand}" "$@"
 }
 
-run_step validate "${RAW_CSV}" --map "${MAP_YAML}" --out "${CONTRACT_CSV}" --meta "${META_VALIDATE}"
-run_step sessionize "${CONTRACT_CSV}" --out "${SESSIONED_CSV}" --meta "${META_SESSION}"
-run_step deltify "${SESSIONED_CSV}" --out "${DELTIFIED_CSV}" --meta "${META_DT}"
+run_scenario() {
+  local subcommand="$1"
+  shift
+  "${PYTHON_BIN}" -m scenario_design.cli --seed "${SEED}" "${subcommand}" "$@"
+}
 
-echo "quickstart outputs ready at ${WORKDIR}"
+run_generator() {
+  local subcommand="$1"
+  shift
+  "${PYTHON_BIN}" -m log_generator.cli --seed "${SEED}" "${subcommand}" "$@"
+}
+
+run_models() {
+  local subcommand="$1"
+  shift
+  "${PYTHON_BIN}" -m models_lstm.cli "${subcommand}" --seed "${SEED}" "$@"
+}
+
+# 1. Contract
+run_contract validate "${RAW_CSV}" --map "${MAP_YAML}" --out "${CONTRACT_CSV}" --meta "${META_VALIDATE}"
+run_contract sessionize "${CONTRACT_CSV}" --out "${SESSIONED_CSV}" --meta "${META_SESSION}"
+run_contract deltify "${SESSIONED_CSV}" --out "${DELTIFIED_CSV}" --meta "${META_DT}"
+
+# 2. Scenario Design
+STATS_PKL="${WORKDIR}/stats.pkl"
+SPEC_JSON="${WORKDIR}/spec.json"
+
+run_scenario fit "${DELTIFIED_CSV}" --out "${STATS_PKL}"
+# Plan with a small time injection anomaly for testing
+run_scenario plan --stats "${STATS_PKL}" --out "${SPEC_JSON}" --anom "time(mode=propagate,p=0.1)"
+
+# 3. Log Generator
+GEN_NORMAL_CSV="${WORKDIR}/gen_normal.csv"
+GEN_ANOM_CSV="${WORKDIR}/gen_anom.csv"
+GEN_AUDIT_JSONL="${WORKDIR}/gen_audit.jsonl"
+GEN_META_JSON="${WORKDIR}/gen_meta.json"
+
+# Override start time (t0) to match sample data range or arbitrary future
+run_generator run --spec "${SPEC_JSON}" \
+  --normal "${GEN_NORMAL_CSV}" \
+  --anom "${GEN_ANOM_CSV}" \
+  --audit "${GEN_AUDIT_JSONL}" \
+  --meta "${GEN_META_JSON}" \
+  --t0 "2024-04-01T00:00:00+00:00"
+
+# 4. Models (LSTM)
+MODEL_DIR="${WORKDIR}/models"
+SCORED_CSV="${WORKDIR}/scored.csv"
+
+# Train on generated normal data
+# Using small parameters for quickstart speed
+run_models train \
+  --normal "${GEN_NORMAL_CSV}" \
+  --val "${GEN_NORMAL_CSV}" \
+  --out "${MODEL_DIR}" \
+  --epochs 2 \
+  --batch-size 4 \
+  --hidden-dim 16
+
+# Score the generated anomalous data
+run_models score \
+  --model "${MODEL_DIR}/best.ckpt" \
+  --in "${GEN_ANOM_CSV}" \
+  --out "${SCORED_CSV}"
+
+echo "quickstart pipeline complete!"
+echo "Outputs at ${WORKDIR}"
+echo "  - Spec: ${SPEC_JSON}"
+echo "  - Gen Logs: ${GEN_NORMAL_CSV}, ${GEN_ANOM_CSV}"
+echo "  - Model: ${MODEL_DIR}/best.ckpt"
+echo "  - Scored: ${SCORED_CSV}"
