@@ -1,5 +1,0 @@
-timestamp,method,path,sid,uid_raw,sub,dc,ip,ua
-2023-10-27T10:00:00Z,GET,/r1,SID123,,,,1.1.1.1,UA1
-2023-10-27T10:00:05Z,GET,/r2,,USER456,,,1.1.1.1,UA1
-2023-10-27T10:00:10Z,GET,/r3,,,,DC789,1.1.1.1,UA1
-2023-10-27T10:00:15Z,GET,/r4,,,,,1.1.1.1,UA1

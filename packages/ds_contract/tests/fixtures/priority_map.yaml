@@ -1,8 +1,0 @@
-timestamp_utc: timestamp
-method: method
-path: path
-sid: sid
-uid_raw: uid_raw
-dc: dc
-ip: ip
-user_agent: ua
