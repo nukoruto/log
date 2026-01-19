@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import math
+import time
 from collections import defaultdict
 from dataclasses import asdict, dataclass
 from hashlib import sha256
@@ -652,6 +653,7 @@ def train_model(config: TrainingConfig) -> Dict[str, Any]:
     history: List[Dict[str, float]] = []
 
     for epoch in range(1, config.epochs + 1):
+        start_time = time.time()
         train_loss, train_parts = _train_one_epoch(
             model,
             train_loader,
@@ -669,6 +671,19 @@ def train_model(config: TrainingConfig) -> Dict[str, Any]:
             device=device,
             lambda_huber=config.lambda_huber,
             huber_delta=config.huber_delta,
+        )
+        end_time = time.time()
+        duration = end_time - start_time
+        
+        current_lr = optimizer.param_groups[0]["lr"]
+        # Use PR-AUC (Average Precision) as the main metric if available, else 0.0
+        val_ap = val_parts.get("pr_auc")
+        val_ap_str = f"{val_ap:.4f}" if val_ap is not None else "N/A"
+
+        print(
+            f"Epoch {epoch}: Train Loss: {train_loss:.4f} | "
+            f"Val Loss: {val_loss:.4f} | Val AP: {val_ap_str} | "
+            f"LR: {current_lr:.2e} | Time: {duration:.2f}s"
         )
 
         history.append(

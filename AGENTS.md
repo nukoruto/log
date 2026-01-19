@@ -82,14 +82,6 @@ log/
   models-lstm score --model runs/exp1/best.ckpt --in anom.csv --out scored.csv
   ```
 
-### E. MATLAB 連携（`packages/matlab_bridge`）
-- **入力**：`scored.csv`  
-- **出力**：`matlab/ref.mat`（From Workspace で読める `struct/timetable`）。  
-  変数：`ref, y_lstm, y_pid, t`。指標（IAE/ISE/ITAE, Tr, Ts, OS, ESS）算出は MATLAB 側スクリプトで実施。  
-- **CLI 例**：
-  ```bash
-  matlab-bridge export --in scored.csv --out matlab/ref.mat
-  ```
 
 ---
 ## 2. 貢献内容とスタイルガイドライン（開発者・エージェント共通）
@@ -122,10 +114,8 @@ log/
 | `contract/`（CSV契約・辞書） | A | `packages/ds_contract` | 契約CSV/セッション分割/Δtロバスト化を統合 |
 | `collector/`（シミュレーション/収集） | B/C | `packages/scenario_design`, `packages/log_generator` | 設計と生成を分離 |
 | `trainer/`（前処理・学習・評価） | D | `packages/models_lstm` | LSTM 学習/推論/スコアを集約 |
-| `simulink/`（.slx/.m） | E | `packages/matlab_bridge`, `matlab/` | .mat ブリッジをPython側で提供 |
 | `artifacts/`, `outputs/` | 共通 | ルート直下（Git 管理外） | `artifacts/`=生成CSV、`outputs/`=学習成果 |
 
-> **方針**：**Node.js 依存は撤去**（将来用に別レポで保全）。本レポは**Python中心**で完結。
 
 ---
 ## 4. 変更の検証方法（lint / test / E2E）
@@ -144,7 +134,6 @@ mypy packages
   - B: `scenario_spec.json` の Schema 検証、seed 再現
   - C: `audit.jsonl` 整合、normal/anom の契約準拠
   - D: `devices`（GPU_MODE 選択）モック、`export-mat` の最小構造検証、学習の smoke test
-  - E: `.mat` 読み込み可能性（scipy.io.loadmat で構造チェック）
 
 ### 4.3 E2E（Quickstart 再現）
 ```bash
@@ -162,7 +151,6 @@ log-generator run --spec scenario_spec.json --seed 42   --normal normal.csv --an
 models-lstm train --normal normal.csv --val normal.csv --out runs/exp1 --seed 42
 models-lstm score --model runs/exp1/best.ckpt --in anom.csv --out scored.csv
 
-matlab-bridge export --in scored.csv --out matlab/ref.mat
 ```
 
 ### 4.4 CI チェック（推奨 Make タスク）

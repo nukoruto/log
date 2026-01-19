@@ -41,7 +41,7 @@ def setup_python_path():
     
     # Add all package src dirs
     src_paths = []
-    for pkg in ["ds_contract", "models_lstm", "matlab_bridge", "scenario_design", "log_generator"]:
+    for pkg in ["ds_contract", "models_lstm", "scenario_design", "log_generator"]:
         src = packages_dir / pkg / "src"
         if src.exists():
             src_paths.append(str(src))
@@ -133,20 +133,9 @@ def main():
     ]
     run_command(cmd_score, env)
 
-    # 5. Export to MATLAB
-    print("\n--- Step 4: MATLAB Export (matlab-bridge export) ---")
-    mat_file = out_dir / "result.mat"
-    cmd_export = [
-        sys.executable, "-m", "matlab_bridge.cli",
-        "export",
-        "--in", str(scored_csv),
-        "--out", str(mat_file),
-        "--seed", seed
-    ]
-    run_command(cmd_export, env)
-    
+    # Remove Step 4: MATLAB Export
     print("\n=== Pipeline Complete ===")
-    print(f"Output MAT file: {mat_file}")
+    print(f"Scored CSV: {scored_csv}")
 
 if __name__ == "__main__":
     try:

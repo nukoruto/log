@@ -350,6 +350,10 @@ def score_dataset(
     # Compute normalized metrics (IAE, ISE, ITAE)
     # We calculate these per session and then take the average over all sessions.
     # ITAE uses relative time step 't' from the start of the session (0, 1, 2...).
+    # New Logic:
+    # IAE = Mean(|e|) = sum(|e|) / N
+    # ISE = Mean(e^2) = sum(e^2) / N
+    # ITAE = Mean_Weighted(|e|) = sum(t * |e|) / sum(t)
     
     grouped_sessions: Dict[tuple[str, str], List[ContractRecord]] = {}
     for record in records:
@@ -365,22 +369,38 @@ def score_dataset(
         # Sort just in case, though they should be sorted by _prepare_records
         session_records.sort(key=lambda r: r.timestamp_utc)
         
-        session_iae = 0.0
-        session_ise = 0.0
-        session_itae = 0.0
+        session_len = len(session_records)
+        if session_len == 0:
+            continue
+
+        session_abs_sum = 0.0
+        session_sq_sum = 0.0
+        session_t_weighted_sum = 0.0
+        sum_of_t = 0.0
         
         for t, record in enumerate(session_records):
             val = float(getattr(record, "s_cls", 0.0))
             abs_val = abs(val)
             
-            session_iae += abs_val
-            session_ise += val * val
-            session_itae += t * abs_val
+            session_abs_sum += abs_val
+            session_sq_sum += val * val
+            session_t_weighted_sum += t * abs_val
+            sum_of_t += t
             
-        total_iae += session_iae
-        total_ise += session_ise
-        total_itae += session_itae
+        # IAE (Mean Absolute Error)
+        total_iae += session_abs_sum / session_len
+        
+        # ISE (Mean Squared Error)
+        total_ise += session_sq_sum / session_len
+        
+        # ITAE (Weighted Mean)
+        if sum_of_t > 0:
+            total_itae += session_t_weighted_sum / sum_of_t
+        else:
+            # If sum_of_t is 0 (session length 1, t=0), ITAE is 0 by definition of weight
+            total_itae += 0.0
 
+    # Average across sessions
     iae = total_iae / num_sessions if num_sessions > 0 else 0.0
     ise = total_ise / num_sessions if num_sessions > 0 else 0.0
     itae = total_itae / num_sessions if num_sessions > 0 else 0.0
@@ -391,6 +411,9 @@ def score_dataset(
         "itae": itae,
         "seed": seed,
     }
+
+    # Reconstruct s_cls_values for plotting
+    s_cls_values = [float(getattr(record, "s_cls", 0.0)) for record in records]
 
     # Plotting the error waveform
     if plt is not None:

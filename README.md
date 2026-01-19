@@ -16,16 +16,13 @@ scenario_spec.json ──▶ (C) log-generator (生成) ──▶ normal.csv, an
 
 normal.csv / anom.csv ──▶ (D) deep-learning (LSTM) ──▶ runs/exp*/best.ckpt, scored.csv, metrics.json
 
-scored.csv ──▶ (E) matlab-bridge ──▶ matlab/ref.mat ──▶ Simulink (LSTM vs PID 比較)
 ```
 
 - **A. ds-contract**: 公開データを研究スキーマへ正規化・セッション分割・Δtロバスト化。
 - **B. scenario-design**: 正常/異常シナリオの「設計図」（確率・制約・注入方針）を JSON へ定義。
 - **C. log-generator**: 設計図に従い、契約CSV形式の**擬似ログ**を決定論的に生成。
 - **D. deep-learning**: LSTM で学習・推論・スコアリング（GPU_MODEで RTX6000/4060/CPU 切替）。
-- **E. matlab-bridge**: MATLAB/Simulink 取り込み用 `.mat` を出力、時間領域指標で LSTM vs PID を比較。
 
-> 非目標：実サーバ収集、Web UI、Burp自動化、運用監視は含めない（別レポ）。
 
 ---
 ## 1. リポ構成（Monorepo）
@@ -37,15 +34,11 @@ log/
     scenario_design/     # B: 正常/異常シナリオ設計（JSON化）
     log_generator/       # C: 設計に基づくCSV生成（normal/anom）
     models_lstm/         # D: LSTM 学習・推論・スコアリング
-    matlab_bridge/       # E: .mat エクスポート（From Workspace 用）
   methods_5parts/
     A_data_contract_dt.md
     B_scenario_design.md
     C_log_generator.md
     D_lstm_learning.md
-    E_matlab_simulink.md
-  matlab/
-    export_timeseries.m  # 任意：可視化・指標算出補助
   scripts/
     quickstart.sh        # 例：A→B→C→D→E を一括実行
   .env.example
@@ -53,7 +46,7 @@ log/
   AGENTS.md              # codex用規約
 ```
 
-> 将来 3〜5 レポへ分割しても、**I/F は CSV/JSON 契約**で疎結合化済み。
+
 
 ---
 ## 2. 契約（I/F）

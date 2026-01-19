@@ -11,7 +11,7 @@
     - [(B) scenario_design](#b-scenario_design)
     - [(C) log_generator](#c-log_generator)
     - [(D) models_lstm](#d-models_lstm)
-    - [(E) matlab_bridge](#e-matlab_bridge)
+    - [(D) models_lstm](#d-models_lstm)
 4. [AITログの前処理](#4-aitログの前処理)
 
 ---
@@ -55,7 +55,7 @@ python scripts/interactive_pipeline.py
 1. `ds_contract process-ait`: ログの前処理
 2. `models_lstm train`: モデル学習
 3. `models_lstm score`: データのスコアリング（ラベル列の除外処理含む）
-4. `matlab_bridge export`: MATLAB形式への変換
+
 
 ```mermaid
 graph TD
@@ -67,7 +67,7 @@ graph TD
     Spec -->|log-generator run| NormalCSV[Normal CSV] & AnomCSV[Anom CSV]
     NormalCSV -->|models-lstm train| Model[LSTM Model]
     Model & AnomCSV -->|models-lstm score| ScoredCSV[Scored CSV]
-    ScoredCSV -->|matlab-bridge export| MAT[MATLAB .mat]
+    Model & AnomCSV -->|models-lstm score| ScoredCSV[Scored CSV]
 ```
 
 ---
@@ -77,7 +77,7 @@ graph TD
 各パッケージをエディタブルモードでインストールすることをお勧めします。
 
 ```bash
-python -m pip install -e packages/ds_contract -e packages/scenario_design -e packages/log_generator -e packages/models_lstm -e packages/matlab_bridge
+python -m pip install -e packages/ds_contract -e packages/scenario_design -e packages/log_generator -e packages/models_lstm
 ```
 
 ---
@@ -244,27 +244,7 @@ models-lstm score --model runs/exp1/best.ckpt --in data/anom.csv --out data/scor
 
 ---
 
-### (E) matlab_bridge
 
-スコアリングされた結果をMATLAB/Simulinkで利用可能な形式に変換します。
-
-**コマンド:** `python -m matlab_bridge.cli` または `matlab-bridge`
-
-#### サブコマンド: `export`
-
-| 引数 | 必須 | 説明 |
-| :--- | :---: | :--- |
-| `--in` | Yes | `models_lstm score` で出力されたCSV |
-| `--out` | Yes | 出力先のMATLABデータファイル(.mat) |
-| `--seed` | Yes | 乱数シード |
-| `--meta` | No | メタデータ出力先JSONパス |
-
-**例:**
-```bash
-matlab-bridge export --in data/scored.csv --out data/ref.mat --seed 42
-```
-
----
 
 ## 4. AITログの前処理
 
