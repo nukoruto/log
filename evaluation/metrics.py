@@ -14,7 +14,8 @@ def calculate_control_metrics(
     y_true: np.ndarray,
     y_scores: np.ndarray,
     experiment_name: str = "experiment",
-    output_dir: Path = None
+    output_dir: Path = None,
+    **kwargs
 ) -> Dict[str, float]:
     """
     Calculate Control Engineering Metrics (IAE, ISE, ITAE) for a sequence of anomaly scores.
@@ -35,26 +36,27 @@ def calculate_control_metrics(
     # Ensure numpy arrays
     y_scores = np.array(y_scores)
     
-    # Time steps (assuming uniform sampling)
-    t = np.arange(len(y_scores))
-    
-    # Error signal e(t). 
-    # In control theory, e(t) = Setpoint - ProcessValue.
-    # Here, 'Setpoint' is Normal (0). ProcessValue is the Anomaly Score.
-    # So e(t) = 0 - Score(t) = -Score(t).
-    # Since we take Absolute/Squared values, we can just use Score(t) directly as the magnitude of deviation.
-    # We assume the model attempts to minimize this score for normal data.
-    e_t = y_scores
-    
-    # IAE: Integrated Absolute Error = sum(|e(t)|) * dt
-    # We assume dt=1 (event step)
-    iae = np.sum(np.abs(e_t))
-    
-    # ISE: Integrated Squared Error = sum(e(t)^2) * dt
-    ise = np.sum(e_t ** 2)
-    
-    # ITAE: Integrated Time-weighted Absolute Error = sum(t * |e(t)|) * dt
-    itae = np.sum(t * np.abs(e_t))
+    # Time steps (assuming uniform sampling if dt not provided)
+    # If dt is provided (array of time intervals), use it.
+    if 'dt' in kwargs and kwargs['dt'] is not None:
+        dt = np.array(kwargs['dt'])
+        # Ensure shape matches, but handle ragged if needed (though numpy array implies consistent length with scores)
+        # Note: ITAE needs accumulated time 't'. Integral starts from t=0.
+        # Construct Time Axis t: t[0]=0, t[i] = t[i-1] + dt[i-1]?
+        # If dt[i] is duration of event i, then t axis for ITAE: t[i] is start time of event i.
+        t = np.insert(np.cumsum(dt), 0, 0)[:-1]
+
+        # Integral = sum(y * dt)
+        iae = np.sum(np.abs(e_t) * dt)
+        ise = np.sum((e_t ** 2) * dt)
+        # ITAE = sum(t * |e| * dt)
+        itae = np.sum(t * np.abs(e_t) * dt)
+        
+    else:
+        t = np.arange(len(y_scores))
+        iae = np.sum(np.abs(e_t))
+        ise = np.sum(e_t ** 2)
+        itae = np.sum(t * np.abs(e_t))
     
     # Normalization (Optional but helpful for comparing different sequence lengths)
     # If we want "Mean" metrics, we divide by N. 
@@ -80,6 +82,9 @@ def calculate_control_metrics(
         output_dir = Path(output_dir)
         output_dir.mkdir(parents=True, exist_ok=True)
         _plot_waveform(t, y_scores, y_true, metrics, experiment_name, output_dir)
+        import json
+        with open(output_dir / 'metrics.json', 'w') as f:
+            json.dump(metrics, f, indent=4)
         
     return metrics
 
