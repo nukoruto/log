@@ -34,11 +34,20 @@ def parse_hdfs(input_dir, output_dir, log_file):
     parser.parse(log_file)
 
 if __name__ == '__main__':
+    import argparse
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--mode', choices=['full', 'demo'], default='full')
+    args = parser.parse_args()
+
     input_dir = 'data/HDFS'
     output_dir = 'data/HDFS/parsed'
-    log_file = 'HDFS.log'
     
-    print(f"Parsing {log_file}...")
+    if args.mode == 'full':
+        log_file = 'HDFS.log'
+    else:
+        log_file = 'HDFS_2k.log'
+    
+    print(f"Parsing {log_file} (Mode: {args.mode})...")
     try:
         parse_hdfs(input_dir, output_dir, log_file)
         print("Parsing completed.")

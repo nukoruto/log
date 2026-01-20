@@ -16,7 +16,7 @@ sys.path.append(str(project_root / 'models' / 'LogDeep'))
 
 from logdeep.models.lstm import loganomaly
 
-device = torch.device("cpu") # LogAnomaly demo used cpu
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 # --- INLINED METRICS FUNCTION ---
 def _plot_waveform(t, scores, labels, metrics, title_prefix, output_dir):
@@ -83,9 +83,14 @@ def calculate_control_metrics(
     return metrics
 # -------------------------------------------------------------
 
-def generate(name, window_size=1):
+def generate(name, window_size=1, data_dir=None):
+    if data_dir is None:
+        data_base = project_root / 'data' / 'HDFS' / 'deeplog_input'
+    else:
+        data_base = Path(data_dir)
+
     # Modified to return list of (seq, time_seq, label_seq) tuples
-    data_path = project_root / 'data' / 'HDFS' / 'deeplog_input' / name
+    data_path = data_base / name
     time_path = project_root / 'data' / 'HDFS' / 'deeplog_input' / (name + "_time")
     label_path = project_root / 'data' / 'HDFS' / 'deeplog_input' / (name + "_label")
     
@@ -121,18 +126,27 @@ def generate(name, window_size=1):
 
     return list(zip(hdfs_seqs, hdfs_times, hdfs_labels))
 
-def evaluate_loganomaly():
+def evaluate_loganomaly(window_size=10, mode='full'):
     input_size = 1
     hidden_size = 64
     num_layers = 2
     num_classes = 28
-    window_size = 10
+    # window_size arg used
     
-    model_path = project_root / 'models' / 'LogDeep' / 'result' / 'loganomaly' / 'loganomaly_last.pth'
+    if mode == 'full':
+        model_dir = project_root / 'models' / 'LogDeep' / 'result' / 'loganomaly'
+        data_dir = project_root / 'data' / 'HDFS' / 'deeplog_input'
+        output_dir = Path("evaluation/results/LogAnomaly")
+    else:
+        model_dir = project_root / 'models' / 'LogDeep' / 'result' / 'loganomaly_2k'
+        data_dir = project_root / 'data' / 'HDFS' / 'deeplog_input_2k'
+        output_dir = Path("evaluation/results/LogAnomaly_2k")
+    
+    model_path = model_dir / 'loganomaly_last.pth'
     if not model_path.exists():
-        model_path = project_root / 'models' / 'LogDeep' / 'result' / 'loganomaly' / 'loganomaly_bestloss.pth'
+        model_path = model_dir / 'loganomaly_bestloss.pth'
         if not model_path.exists():
-            print("Model definition not found")
+            print(f"Model definition not found at {model_path}")
             return
             
     model = loganomaly(input_size=input_size, 
@@ -145,9 +159,9 @@ def evaluate_loganomaly():
     model.to(device)
     model.eval()
     
-    print("Generating test data...")
-    test_normal = generate('hdfs_test_normal', window_size)
-    test_abnormal = generate('hdfs_test_abnormal', window_size)
+    print(f"Generating test data from {data_dir}...")
+    test_normal = generate('hdfs_test_normal', window_size, data_dir)
+    test_abnormal = generate('hdfs_test_abnormal', window_size, data_dir)
     
     scores = []
     dt_list = []
@@ -248,8 +262,8 @@ def evaluate_loganomaly():
     metrics = calculate_control_metrics(
         y_r_t, 
         y_e_t, 
-        experiment_name="LogAnomaly_HDFS_Test", 
-        output_dir=Path("evaluation/results/LogAnomaly"),
+        experiment_name=f"LogAnomaly_HDFS_{mode}_Test", 
+        output_dir=output_dir,
         dt=dt_list
     )
     
@@ -266,8 +280,18 @@ def evaluate_loganomaly():
     print(metrics)
     
     import json
-    with open(Path("evaluation/results/LogAnomaly") / 'metrics.json', 'w') as f:
+    with open(output_dir / 'metrics.json', 'w') as f:
         json.dump(metrics, f, indent=4)
 
 if __name__ == "__main__":
-    evaluate_loganomaly()
+    import argparse
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--mode', choices=['full', 'demo'], default='full')
+    args = parser.parse_args()
+    
+    window_size = 10 if args.mode == 'full' else 1
+    
+    # Inject window_size into evaluate function via a wrapper or just modify evaluate_loganomaly
+    # Actually evaluate_loganomaly hardcodes window_size. Let's pass it.
+    # We need to change evaluate_loganomaly signature.
+    evaluate_loganomaly(window_size=window_size, mode=args.mode)

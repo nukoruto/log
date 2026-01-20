@@ -4,11 +4,16 @@ import numpy as np
 import shutil
 from pathlib import Path
 
-def setup_loganomaly():
+def setup_loganomaly(mode='full'):
     # Paths
     project_root = Path(__file__).resolve().parent.parent
-    source_dir = project_root / 'data' / 'HDFS' / 'deeplog_input'
-    target_dir = project_root / 'models' / 'LogDeep' / 'data' / 'hdfs'
+    
+    if mode == 'full':
+        source_dir = project_root / 'data' / 'HDFS' / 'deeplog_input'
+        target_dir = project_root / 'models' / 'LogDeep' / 'data' / 'hdfs'
+    else:
+        source_dir = project_root / 'data' / 'HDFS' / 'deeplog_input_2k'
+        target_dir = project_root / 'models' / 'LogDeep' / 'data' / 'hdfs_2k' / 'hdfs'
     
     target_dir.mkdir(parents=True, exist_ok=True)
     
@@ -173,4 +178,9 @@ def setup_loganomaly():
     print(f"Generated train.csv with {len(train_df)} sequences.")
 
 if __name__ == "__main__":
-    setup_loganomaly()
+    import argparse
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--mode', choices=['full', 'demo'], default='full')
+    args = parser.parse_args()
+    
+    setup_loganomaly(mode=args.mode)

@@ -2,7 +2,7 @@ import pandas as pd
 import os
 from pathlib import Path
 
-def convert_to_deeplog_format(structured_csv, output_dir):
+def convert_to_deeplog_format(structured_csv, output_dir, log_file_path=None, min_len=11):
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
 
@@ -33,8 +33,8 @@ def convert_to_deeplog_format(structured_csv, output_dir):
     # We must read the original log file to get BlockIds.
     # Assuming line correspondence 1-to-1.
     
-    log_file_path = Path('data/HDFS/HDFS.log')
-    if log_file_path.exists():
+    # log_file_path passed as argument
+    if log_file_path and log_file_path.exists():
         with open(log_file_path, 'r', encoding='utf-8') as f:
             raw_logs = f.readlines()
         
@@ -87,9 +87,9 @@ def convert_to_deeplog_format(structured_csv, output_dir):
     timestamps = grouped['Timestamp'].apply(list)
     
     # 3. Convert strings to ints
-    # Filter sessions with length < 11 (Window 10 + 1 for prediction)
+    # Filter sessions with length < min_len
     # Filter both sessions and timestamps
-    valid_indices = [i for i, s in enumerate(sessions) if len(s) >= 11]
+    valid_indices = [i for i, s in enumerate(sessions) if len(s) >= min_len]
     sessions = sessions.iloc[valid_indices]
     timestamps = timestamps.iloc[valid_indices]
     
@@ -171,9 +171,27 @@ def convert_to_deeplog_format(structured_csv, output_dir):
     print(f"Saved timestamps to {output_dir / 'hdfs_test_normal_time'}")
 
 if __name__ == '__main__':
-    structured_csv = 'data/HDFS/parsed/HDFS.log_structured.csv'
-    output_dir = 'data/HDFS/deeplog_input'
-    
-    print("Converting HDFS data to DeepLog format...")
-    convert_to_deeplog_format(structured_csv, output_dir)
+    import argparse
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--mode', choices=['full', 'demo'], default='full')
+    args = parser.parse_args()
+
+    # Logic switch
+    if args.mode == 'full':
+        structured_csv = 'data/HDFS/parsed/HDFS.log_structured.csv'
+        log_file_path = Path('data/HDFS/HDFS.log')
+        min_len = 11 # Window 10
+        output_dir = 'data/HDFS/deeplog_input'
+    else:
+        structured_csv = 'data/HDFS/parsed/HDFS_2k.log_structured.csv'
+        log_file_path = Path('data/HDFS/HDFS_2k.log')
+        min_len = 2 # Window 1
+        output_dir = 'data/HDFS/deeplog_input_2k'
+
+    print(f"Converting HDFS data to DeepLog format (Mode: {args.mode})...")
+    # Need to pass these config values to the function or change the function signature
+    # Ideally change function signature, but to keep it simple, I will modify the function 
+    # to accept an optional 'config' dict or arguments.
+    # Let's update `convert_to_deeplog_format` signature first.
+    convert_to_deeplog_format(structured_csv, output_dir, log_file_path=log_file_path, min_len=min_len)
     print("Conversion completed.")

@@ -14,7 +14,31 @@
 本リポジトリをクローンし、必要なライブラリをインストールしてください。
 (requirements.txt は別途用意予定)
 
-## 2. データ準備 (HDFS)
+## 2. デモモード (Demo Mode)
+
+本パイプラインは、開発や動作確認用の「デモモード」と、本格的な学習を行う「フルモード」の2つのモードをサポートしています。
+すべてのパイプラインスクリプトにて `--mode demo` 引数を指定可能です。指定しない場合はデフォルトで `full` モードになります。
+
+| 機能 | フルモード (デフォルト) | デモモード (`--mode demo`) |
+| :--- | :--- | :--- |
+| **入力ログ** | `HDFS.log` (約1.5GB) | `HDFS_2k.log` (2000行) |
+| **Window Size** | 10 | 1 |
+| **セッションフィルタ** | 長さ >= 11 (学習用) | 長さ >= 2 (テスト用) |
+| **DeepLogデータ出力先** | `data/HDFS/deeplog_input` | `data/HDFS/deeplog_input_2k` |
+| **LogAnomalyデータ出力先** | `models/LogDeep/data/hdfs` | `models/LogDeep/data/hdfs_2k` |
+| **DeepLog Epoch数** | 300 | 5 |
+| **LogAnomaly Epoch数** | 50 | 5 |
+
+**デモモードの実行例:**
+```bash
+python pipeline/1_parse.py --mode demo
+python pipeline/conversion.py --mode demo
+python pipeline/4_setup_loganomaly_data.py --mode demo
+python pipeline/2_train_deeplog.py --mode demo
+python pipeline/3_evaluate_deeplog.py --mode demo
+```
+
+## 3. データ準備 (HDFS - Full Mode)
 
 ### データの配置
 `data/HDFS/HDFS_2k.log` (またはフルサイズの `HDFS.log`) を配置します。
@@ -26,7 +50,7 @@ python pipeline/1_parse.py
 ```
 出力: `data/HDFS/parsed/HDFS.log_structured.csv`
 
-## 3. DeepLog モデルの実行
+## 4. DeepLog モデルの実行
 
 DeepLog用データへの変換、学習、評価を行います。
 
@@ -44,7 +68,7 @@ python pipeline/2_train_deeplog.py
 python pipeline/3_evaluate_deeplog.py
 ```
 
-## 4. LogAnomaly モデルの実行
+## 5. LogAnomaly モデルの実行
 
 LogAnomaly用のデータセットアップ（意味ベクトル生成）と学習、評価を行います。
 
@@ -61,7 +85,7 @@ python pipeline/2_train_loganomaly.py
 python pipeline/3_evaluate_loganomaly.py
 ```
 
-## 5. 結果の比較
+## 6. 結果の比較
 
 両モデルの評価結果を集計し、比較表を出力します。
 

@@ -3,37 +3,31 @@ import sys
 from pathlib import Path
 
 def train_loganomaly():
+    import argparse
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--mode', choices=['full', 'demo'], default='full')
+    args = parser.parse_args()
+
     # LogDeep demo script location
-    # d:\kosen\sotuken\log\models\LogDeep\demo\loganomaly.py
-    # This script assumes it's run from 'demo' folder usually, or we adjust paths.
-    # It sets options['data_dir'] = '../data/'
-    # So if we run it from 'models/LogDeep/demo', it looks for '../data/' which is 'models/LogDeep/data'.
-    # This matches our setup.
-    
     project_root = Path(__file__).resolve().parent.parent
     demo_dir = project_root / 'models' / 'LogDeep' / 'demo'
     
-    # We need to modify loganomaly.py to:
-    # 1. Use small epochs (for verify)
-    # 2. Use cpu (maybe)
-    # 3. Use 'hdfs' dataset (it hardcodes specific paths?)
-    # Let's check loganomaly.py again.
-    # It has `options['data_dir'] = '../data/'`
-    # Training uses `Trainer`. 
-    # Logic in `logdeep/dataset/sample.py` likely looks for 'train.csv' in `options['data_dir'] + 'hdfs/train.csv'`?
-    # No, usually LogDeep config specifies subfolder.
-    # IN loganomaly.py:
-    # options['sample'] = "sliding_window"
-    # It doesn't explicitly set dataset name 'hdfs', but maybe it's default?
-    # Wait, `loganomaly.py` doesn't seem to specify `dataset_name`.
-    # Let's inspect `Trainer`.
+    if args.mode == 'full':
+        window_size = 10
+        epochs = 50 # Default for full
+        data_dir = '../data/'
+        save_dir = '../result/loganomaly/'
+    else:
+        window_size = 1
+        epochs = 5 # Default for demo
+        data_dir = '../data/hdfs_2k/'
+        save_dir = '../result/loganomaly_2k/'
+
+    cmd = f"python loganomaly.py train --window_size {window_size} --max_epoch {epochs} --data_dir {data_dir} --save_dir {save_dir}"
     
-    # But for now, let's just try running it and see if it picks up our `data/hdfs/train.csv`.
-    # Actually, `loganomaly.py` sets `options['save_dir'] = "../result/loganomaly/"`.
+    print(f"Running LogAnomaly from {demo_dir} (Mode: {args.mode})")
+    print(f"Command: {cmd}")
     
-    cmd = f"python loganomaly.py train"
-    
-    print(f"Running LogAnomaly from {demo_dir}")
     os.chdir(demo_dir)
     os.system(cmd)
 

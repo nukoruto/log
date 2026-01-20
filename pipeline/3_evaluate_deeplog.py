@@ -98,12 +98,12 @@ def calculate_control_metrics(
     return metrics
 # -------------------------------------------------------------
 
-def generate_data(name, window_size):
+def generate_data(name, window_size, data_dir=Path("data/HDFS/deeplog_input")):
     hdfs = []
     hdfs_times = []
     hdfs_labels = []
     
-    base_path = Path("data/HDFS/deeplog_input")
+    base_path = Path(data_dir)
     data_path = base_path / name
     time_path = base_path / (name + "_time")
     label_path = base_path / (name + "_label") # New
@@ -152,7 +152,10 @@ def generate_data(name, window_size):
 
     return list(zip(hdfs, hdfs_times, hdfs_labels))
 
-def evaluate(model_path, num_classes=28, window_size=10):
+def evaluate(model_path, num_classes=28, window_size=10, data_dir=None, result_dir=None):
+    if data_dir is None: data_dir = Path("data/HDFS/deeplog_input")
+    if result_dir is None: result_dir = Path("evaluation/results/DeepLog")
+    
     input_size = 1
     hidden_size = 64
     num_layers = 2
@@ -162,8 +165,8 @@ def evaluate(model_path, num_classes=28, window_size=10):
     model.eval()
     
     # Load test data
-    normal_data = generate_data('hdfs_test_normal', window_size)
-    abnormal_data = generate_data('hdfs_test_abnormal', window_size)
+    normal_data = generate_data('hdfs_test_normal', window_size, data_dir)
+    abnormal_data = generate_data('hdfs_test_abnormal', window_size, data_dir)
     
     if not normal_data and not abnormal_data:
         print("No test data found.")
@@ -277,7 +280,7 @@ def evaluate(model_path, num_classes=28, window_size=10):
         y_r_t, 
         y_e_t, 
         experiment_name="DeepLog_HDFS_Test", 
-        output_dir=Path("evaluation/results/DeepLog"),
+        output_dir=result_dir,
         dt=dt_list
     )
     
@@ -289,15 +292,31 @@ def evaluate(model_path, num_classes=28, window_size=10):
     print(metrics)
     
     import json
-    results_dir = Path("evaluation/results/DeepLog")
-    with open(results_dir / 'metrics.json', 'w') as f:
+    with open(result_dir / 'metrics.json', 'w') as f:
         json.dump(metrics, f, indent=4)
     
 if __name__ == "__main__":
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--mode', choices=['full', 'demo'], default='full')
+    args = parser.parse_args()
+    
+    if args.mode == 'full':
+        window_size = 10
+        data_dir = Path("data/HDFS/deeplog_input")
+        result_dir = Path("evaluation/results/DeepLog")
+    else:
+        window_size = 1
+        data_dir = Path("data/HDFS/deeplog_input_2k")
+        result_dir = Path("evaluation/results/DeepLog_2k")
+    
     model_dir = Path("model")
     models = list(model_dir.glob("*.pt"))
     if not models:
         print("No models found!")
         sys.exit(1)
     latest_model = max(models, key=lambda p: p.stat().st_mtime)
-    evaluate(latest_model)
+    
+    print(f"Evaluating with window_size={window_size} (Mode: {args.mode})")
+    print(f"Data Source: {data_dir}")
+    print(f"Results: {result_dir}")
+    evaluate(latest_model, window_size=window_size, data_dir=data_dir, result_dir=result_dir)
