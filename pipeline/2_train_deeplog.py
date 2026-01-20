@@ -11,7 +11,7 @@ def train_deeplog():
     num_epochs = 5 # Reduced for quick verification (was 300)
     
     # Command
-    cmd = f"python {script_path} -data {data_path} -num_epochs {num_epochs} -window_size 1"
+    cmd = f"python {script_path} -data {data_path} -num_epochs {num_epochs} -window_size 10"
     
     print(f"Running: {cmd}")
     os.system(cmd)

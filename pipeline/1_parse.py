@@ -36,7 +36,7 @@ def parse_hdfs(input_dir, output_dir, log_file):
 if __name__ == '__main__':
     input_dir = 'data/HDFS'
     output_dir = 'data/HDFS/parsed'
-    log_file = 'HDFS_2k.log'
+    log_file = 'HDFS.log'
     
     print(f"Parsing {log_file}...")
     try:

@@ -126,7 +126,7 @@ def evaluate_loganomaly():
     hidden_size = 64
     num_layers = 2
     num_classes = 28
-    window_size = 1
+    window_size = 10
     
     model_path = project_root / 'models' / 'LogDeep' / 'result' / 'loganomaly' / 'loganomaly_last.pth'
     if not model_path.exists():

@@ -33,7 +33,7 @@ def convert_to_deeplog_format(structured_csv, output_dir):
     # We must read the original log file to get BlockIds.
     # Assuming line correspondence 1-to-1.
     
-    log_file_path = Path('data/HDFS/HDFS_2k.log')
+    log_file_path = Path('data/HDFS/HDFS.log')
     if log_file_path.exists():
         with open(log_file_path, 'r', encoding='utf-8') as f:
             raw_logs = f.readlines()
@@ -87,9 +87,9 @@ def convert_to_deeplog_format(structured_csv, output_dir):
     timestamps = grouped['Timestamp'].apply(list)
     
     # 3. Convert strings to ints
-    # Filter sessions with length < 2 (Need at least 2 events for next-event prediction)
+    # Filter sessions with length < 11 (Window 10 + 1 for prediction)
     # Filter both sessions and timestamps
-    valid_indices = [i for i, s in enumerate(sessions) if len(s) >= 2]
+    valid_indices = [i for i, s in enumerate(sessions) if len(s) >= 11]
     sessions = sessions.iloc[valid_indices]
     timestamps = timestamps.iloc[valid_indices]
     
@@ -171,7 +171,7 @@ def convert_to_deeplog_format(structured_csv, output_dir):
     print(f"Saved timestamps to {output_dir / 'hdfs_test_normal_time'}")
 
 if __name__ == '__main__':
-    structured_csv = 'data/HDFS/parsed/HDFS_2k.log_structured.csv'
+    structured_csv = 'data/HDFS/parsed/HDFS.log_structured.csv'
     output_dir = 'data/HDFS/deeplog_input'
     
     print("Converting HDFS data to DeepLog format...")

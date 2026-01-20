@@ -24,7 +24,7 @@
 ```bash
 python pipeline/1_parse.py
 ```
-出力: `data/HDFS/parsed/HDFS_2k.log_structured.csv`
+出力: `data/HDFS/parsed/HDFS.log_structured.csv`
 
 ## 3. DeepLog モデルの実行
 
@@ -36,7 +36,7 @@ DeepLog用データへの変換、学習、評価を行います。
 python pipeline/conversion.py
 
 # 2. モデル学習
-# HDFS_2kのような小規模データの場合は、window_size=1 等に調整されています
+# HDFSフルデータの場合は、window_size=10 が一般的です (スクリプト内で設定済)
 python pipeline/2_train_deeplog.py
 
 # 3. 評価
@@ -81,8 +81,8 @@ LogAnomaly  3.873657  3.298336  9.595449        0.0     0.0  0.00
 ## 評価指標について
 
 *   **制御工学指標 (Anomaly Score Waveform Evaluation)**
-    *   **IAE (Integrated Absolute Error)**: 異常スコアの総和。モデルがどれだけ「正常(=0)」から逸脱したかを示します。
-    *   **ISE (Integrated Squared Error)**: 異常スコアの二乗和。大きな誤差をより重く評価します。
+    *   **IAE (Integrated Absolute Error)**: 異常スコアの積分値 ($\sum |e(t)| \cdot \Delta t$)。$\Delta t$ (イベント間時間) を考慮し、異常の持続性と頻度を評価します。
+    *   **ISE (Integrated Squared Error)**: 異常スコアの二乗積分 ($\sum e(t)^2 \cdot \Delta t$)。大きな誤差をより重く評価します。
 *   **分類指標 (Binary Classification)**
     *   **Precision/Recall/F1**: 異常検知の正確さ。Top-K予測などで次イベントを予測できなかった場合を「異常」と判定し、正解ラベルと比較します。
 

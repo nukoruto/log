@@ -152,7 +152,7 @@ def generate_data(name, window_size):
 
     return list(zip(hdfs, hdfs_times, hdfs_labels))
 
-def evaluate(model_path, num_classes=28, window_size=1):
+def evaluate(model_path, num_classes=28, window_size=10):
     input_size = 1
     hidden_size = 64
     num_layers = 2
