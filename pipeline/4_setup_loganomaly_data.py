@@ -1,4 +1,5 @@
 import json
+import sys
 import pandas as pd
 import numpy as np
 import shutil
@@ -17,37 +18,16 @@ def setup_loganomaly(mode='full'):
     
     target_dir.mkdir(parents=True, exist_ok=True)
     
-    # 1. Generate Dummy Semantic Vectors
-    print("Generating dummy semantic vectors...")
-    mapping_path = source_dir / 'event_mapping.csv'
-    if not mapping_path.exists():
-        print(f"Error: {mapping_path} not found. Run conversion.py first.")
+    # 1. Generate Semantic Vectors
+    print("Generating semantic vectors...")
+    import subprocess
+    embed_script = project_root / 'pipeline' / '4_setup_loganomaly_embeddings.py'
+    try:
+        subprocess.check_call([sys.executable, str(embed_script), '--mode', mode])
+    except subprocess.CalledProcessError as e:
+        print(f"Error calling embedding script: {e}")
         return
 
-    mapping_df = pd.read_csv(mapping_path)
-    # IntId is 1-based in my conversion for DeepLog. 
-    # LogDeep usually expects 0-based or 1-based?
-    # DeepLog subtracts 1. LogAnomaly might do the same or just use as index.
-    # Safe bet: generate for range [0, MaxID].
-    
-    max_id = mapping_df['IntId'].max()
-    vec_dim = 300
-    
-    # Create simple random vectors
-    # Key is string representation of integer ID
-    # DeepLog and LogDeep usually assume events are 0..N-1 or 1..N
-    # If our data has 1..N, we generate for 1..N.
-    # Note: LogAnomaly might try to look up '0' if it subtracts 1 from 1. 
-    # Let's generate for 0 to MaxID just to be safe.
-    
-    vec_dict = {}
-    for i in range(max_id + 2):
-        vec_dict[str(i)] = np.random.rand(vec_dim).tolist()
-        
-    vec_path = target_dir / 'event2semantic_vec.json'
-    with open(vec_path, 'w') as f:
-        json.dump(vec_dict, f)
-    print(f"Saved {vec_path}")
 
     # 2. Copy Data Files
     # We copy our generated session files to LogDeep's data folder
@@ -83,7 +63,7 @@ def setup_loganomaly(mode='full'):
     # So we need inputs >= 2.
     
     # Use actual data from DeepLog input
-    print("Using actual data from valid HDFS_2k conversion...")
+    print(f"Using actual data from {source_dir.name}...")
     
     def read_sequences(path):
         if not path.exists():
