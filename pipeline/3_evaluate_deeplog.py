@@ -304,10 +304,19 @@ if __name__ == "__main__":
         window_size = 10
         data_dir = Path("data/HDFS/deeplog_input")
         result_dir = Path("evaluation/results/DeepLog")
+        mapping_path = data_dir / "event_mapping.csv"
     else:
         window_size = 1
         data_dir = Path("data/HDFS/deeplog_input_2k")
         result_dir = Path("evaluation/results/DeepLog_2k")
+        mapping_path = data_dir / "event_mapping.csv"
+        
+    num_classes = 28
+    if mapping_path.exists():
+        import pandas as pd
+        df = pd.read_csv(mapping_path)
+        num_classes = df['IntId'].max()
+        print(f"Detected num_classes: {num_classes}")
     
     model_dir = Path("model")
     models = list(model_dir.glob("*.pt"))
@@ -316,7 +325,7 @@ if __name__ == "__main__":
         sys.exit(1)
     latest_model = max(models, key=lambda p: p.stat().st_mtime)
     
-    print(f"Evaluating with window_size={window_size} (Mode: {args.mode})")
+    print(f"Evaluating with window_size={window_size}, num_classes={num_classes} (Mode: {args.mode})")
     print(f"Data Source: {data_dir}")
     print(f"Results: {result_dir}")
-    evaluate(latest_model, window_size=window_size, data_dir=data_dir, result_dir=result_dir)
+    evaluate(latest_model, window_size=window_size, num_classes=num_classes, data_dir=data_dir, result_dir=result_dir)

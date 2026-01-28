@@ -17,13 +17,23 @@ def train_loganomaly():
         epochs = 50 # Default for full
         data_dir = '../data/'
         save_dir = '../result/loganomaly/'
+        mapping_path = "data/HDFS/deeplog_input/event_mapping.csv"
     else:
         window_size = 1
         epochs = 5 # Default for demo
         data_dir = '../data/hdfs_2k/'
         save_dir = '../result/loganomaly_2k/'
+        mapping_path = "data/HDFS/deeplog_input_2k/event_mapping.csv"
 
-    cmd = f"python loganomaly.py train --window_size {window_size} --max_epoch {epochs} --data_dir {data_dir} --save_dir {save_dir}"
+    # Detect num_classes from event_mapping.csv if exists
+    num_classes = 28 # Default
+    if Path(mapping_path).exists():
+        import pandas as pd
+        df = pd.read_csv(mapping_path)
+        num_classes = df['IntId'].max()
+        print(f"Detected max label: {num_classes-1}, setting num_classes to {num_classes}")
+
+    cmd = f"python loganomaly.py train --window_size {window_size} --max_epoch {epochs} --data_dir {data_dir} --save_dir {save_dir} --num_classes {num_classes}"
     
     print(f"Running LogAnomaly from {demo_dir} (Mode: {args.mode})")
     print(f"Command: {cmd}")

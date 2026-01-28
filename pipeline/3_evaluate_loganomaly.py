@@ -126,7 +126,7 @@ def generate(name, window_size=1, data_dir=None):
 
     return list(zip(hdfs_seqs, hdfs_times, hdfs_labels))
 
-def evaluate_loganomaly(window_size=10, mode='full'):
+def evaluate_loganomaly(window_size=10, mode='full', num_classes=28):
     input_size = 1
     hidden_size = 64
     num_layers = 2
@@ -289,9 +289,22 @@ if __name__ == "__main__":
     parser.add_argument('--mode', choices=['full', 'demo'], default='full')
     args = parser.parse_args()
     
-    window_size = 10 if args.mode == 'full' else 1
+    mapping_path = None
+    if args.mode == 'full':
+        window_size = 10
+        mapping_path = project_root / "data/HDFS/deeplog_input/event_mapping.csv"
+    else:
+        window_size = 1
+        mapping_path = project_root / "data/HDFS/deeplog_input_2k/event_mapping.csv"
+        
+    num_classes = 28
+    if mapping_path and mapping_path.exists():
+        import pandas as pd
+        df = pd.read_csv(mapping_path)
+        num_classes = df['IntId'].max()
+        print(f"Detected num_classes: {num_classes}")
     
     # Inject window_size into evaluate function via a wrapper or just modify evaluate_loganomaly
     # Actually evaluate_loganomaly hardcodes window_size. Let's pass it.
     # We need to change evaluate_loganomaly signature.
-    evaluate_loganomaly(window_size=window_size, mode=args.mode)
+    evaluate_loganomaly(window_size=window_size, mode=args.mode, num_classes=num_classes)
