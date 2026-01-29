@@ -215,4 +215,5 @@ __marimo__/
 
 # Generated Data
 data/HDFS/deeplog_input/
+data/HDFS/deeplog_input_2k/
 models/LogDeep/data/

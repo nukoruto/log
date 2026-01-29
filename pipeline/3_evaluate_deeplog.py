@@ -179,7 +179,7 @@ def evaluate(model_path, num_classes=28, window_size=10, data_dir=None, result_d
     y_true_binary = [] # Session binary labels for F1
     y_pred_binary = [] 
     
-    num_candidates = 1 
+    num_candidates = 9 
     
     print(f"Evaluating Normal Data ({len(normal_data)} sessions)...")
     with torch.no_grad():

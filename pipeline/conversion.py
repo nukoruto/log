@@ -104,68 +104,94 @@ def convert_to_deeplog_format(structured_csv, output_dir, log_file_path=None, mi
         
     session_times = timestamps.apply(get_relative_times)
     
-    # 4. Split Train/Test (Simple split for demo)
-    # We use all for train for now as verification.
+    
+    # 3.5 Merge with Anomaly Labels
+    label_csv_path = Path('data/HDFS/anomaly_label.csv')
+    if label_csv_path.exists():
+        print(f"Loading labels from {label_csv_path}")
+        label_df = pd.read_csv(label_csv_path)
+        # Ensure BlockId is string
+        label_df['BlockId'] = label_df['BlockId'].astype(str)
+        
+        # Merge labels into our session data
+        # 'sessions' is a Series indexed by BlockId. 
+        # We can create a DataFrame from it to merge.
+        session_df = pd.DataFrame({'EventInts': sessions, 'Times': session_times})
+        session_df.index.name = 'BlockId'
+        session_df.reset_index(inplace=True)
+        session_df['BlockId'] = session_df['BlockId'].astype(str)
+        
+        merged_df = pd.merge(session_df, label_df, on='BlockId', how='left')
+        merged_df['Label'] = merged_df['Label'].fillna('Normal') # Default to Normal
+        
+    else:
+        print(f"Warning: {label_csv_path} not found! Treating all as Normal and skipping real anomaly split.")
+        # Fallback to original logic manually or just error? 
+        return
+
+    # 4. Split Train/Test based on Labels
+    # Train: Normal sessions
+    # Test Normal: Normal sessions (subset)
+    # Test Abnormal: Anomaly sessions
+    
+    normal_df = merged_df[merged_df['Label'] == 'Normal']
+    abnormal_df = merged_df[merged_df['Label'] == 'Anomaly']
+    
+    print(f"Normal sessions: {len(normal_df)}, Abnormal sessions: {len(abnormal_df)}")
+    
+    # Shuffle Normal
+    normal_df = normal_df.sample(frac=1, random_state=42).reset_index(drop=True)
+    
+    # Split Normal into Train (80%) and Test (20%)
+    train_size = int(len(normal_df) * 0.8)
+    train_df = normal_df.iloc[:train_size]
+    test_normal_df = normal_df.iloc[train_size:]
+    
+    test_abnormal_df = abnormal_df
+    
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
     
     # Save Train Events
     with open(output_dir / 'hdfs_train', 'w') as f:
-        for seq in session_ints:
+        for seq in train_df['EventInts']:
+            f.write(' '.join(seq) + '\n')
+            
+    # Save Train Times (Optional)
+    with open(output_dir / 'hdfs_train_time', 'w') as f:
+        for seq in train_df['Times']:
+            f.write(' '.join(seq) + '\n')
+            
+    # Save Train Labels (All 0)
+    with open(output_dir / 'hdfs_train_label', 'w') as f:
+        for seq in train_df['EventInts']:
+            f.write(' '.join(['0'] * len(seq)) + '\n')
+            
+    # Save Test Normal Events
+    with open(output_dir / 'hdfs_test_normal', 'w') as f:
+        for seq in test_normal_df['EventInts']:
             f.write(' '.join(seq) + '\n')
 
-    # Save Train Times (Optional, but good for completeness)
-    # DeepLog doesn't use time for training in this impl, but let's save.
-    # We won't generate hdfs_train_time unless converting training code, but might be useful later.
-    
-    import random
-    # Create a dummy test set (copy of train)
-    with open(output_dir / 'hdfs_test_normal', 'w') as f:
-         for seq in session_ints:
-            f.write(' '.join(seq) + '\n')
-            
-    # Save Normal Times & Labels
+    # Save Test Normal Times & Labels
     with open(output_dir / 'hdfs_test_normal_time', 'w') as f_time, \
          open(output_dir / 'hdfs_test_normal_label', 'w') as f_label:
-         for seq in session_times:
-            f_time.write(' '.join(seq) + '\n')
-            # All 0 for normal
+         for seq, times in zip(test_normal_df['EventInts'], test_normal_df['Times']):
+            f_time.write(' '.join(times) + '\n')
             f_label.write(' '.join(['0'] * len(seq)) + '\n')
             
-    # Create synthetic abnormal data (randomly changes 1 event per session)
-    with open(output_dir / 'hdfs_test_abnormal', 'w') as f_evt, \
-         open(output_dir / 'hdfs_test_abnormal_time', 'w') as f_time, \
+    # Save Test Abnormal Events
+    with open(output_dir / 'hdfs_test_abnormal', 'w') as f:
+        for seq in test_abnormal_df['EventInts']:
+            f.write(' '.join(seq) + '\n')
+            
+    # Save Test Abnormal Times & Labels
+    with open(output_dir / 'hdfs_test_abnormal_time', 'w') as f_time, \
          open(output_dir / 'hdfs_test_abnormal_label', 'w') as f_label:
          
-         all_event_ids = list(event_to_int.values())
-         # session_ints and session_times are Series indexed by BlockId, so they align.
-         # Iterate over values
-         for seq, times in zip(session_ints, session_times):
-            # Copy sequence
-            mod_seq = list(seq)
-            mod_times = list(times)
-            mod_labels = ['0'] * len(mod_seq) # Default all 0
-            
-            if len(mod_seq) > 0:
-                # Pick a random position
-                idx = random.randint(0, len(mod_seq) - 1)
-                # Pick a random NEW event
-                current_val = mod_seq[idx]
-                new_val = current_val
-                # Ensure we change it
-                if len(all_event_ids) > 1:
-                    while new_val == current_val:
-                        new_val = str(random.choice(all_event_ids))
-                else:
-                    new_val = "999" # Force unknown if only 1 event type exists
-                
-                mod_seq[idx] = new_val
-                # Label this timestamp as 1 (Anomaly)
-                mod_labels[idx] = '1'
-                
-            f_evt.write(' '.join(mod_seq) + '\n')
-            f_time.write(' '.join(mod_times) + '\n')
-            f_label.write(' '.join(mod_labels) + '\n')
+         for seq, times in zip(test_abnormal_df['EventInts'], test_abnormal_df['Times']):
+            f_time.write(' '.join(times) + '\n')
+            # Label all events as 1 for anomalous sessions
+            f_label.write(' '.join(['1'] * len(seq)) + '\n')
             
     print(f"Saved sessions to {output_dir / 'hdfs_train'}")
     print(f"Saved timestamps to {output_dir / 'hdfs_test_normal_time'}")
