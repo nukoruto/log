@@ -1,0 +1,47 @@
+{
+    "synonyms": [
+        [
+            "error",
+            "fail",
+            "failure",
+            "err"
+        ],
+        [
+            "start",
+            "begin",
+            "launch"
+        ],
+        [
+            "terminate",
+            "stop",
+            "end",
+            "kill"
+        ]
+    ],
+    "antonyms": [
+        [
+            "up",
+            "down"
+        ],
+        [
+            "start",
+            "stop"
+        ],
+        [
+            "open",
+            "close"
+        ],
+        [
+            "connect",
+            "disconnect"
+        ],
+        [
+            "success",
+            "fail"
+        ],
+        [
+            "receive",
+            "send"
+        ]
+    ]
+}

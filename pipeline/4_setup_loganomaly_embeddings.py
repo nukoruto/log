@@ -90,13 +90,91 @@ def generate_embeddings(mode='full'):
     model = Word2Vec(sentences=sentences, vector_size=vector_dim, window=5, min_count=1, workers=1, seed=42)
     # min_count=1 ensures even rare words in templates have vectors
     
-    # Generate Event Embeddings (Average of word vectors)
+    # --- 1. Retrofitting (Domain Knowledge Injection) ---
+    dict_path = project_root / 'data' / 'dictionaries' / 'synonyms_antonyms.json'
+    if dict_path.exists():
+        print(f"Loading domain dictionary from {dict_path}...")
+        with open(dict_path, 'r') as f:
+            domain_dict = json.load(f)
+            
+        synonyms = domain_dict.get('synonyms', [])
+        antonyms = domain_dict.get('antonyms', [])
+        
+        # Helper to get vector safely
+        def get_vec(word):
+            if word in model.wv:
+                return model.wv[word]
+            return None
+            
+        # Helper to normalize
+        def normalize(v):
+            norm = np.linalg.norm(v)
+            if norm == 0: return v
+            return v / norm
+
+        print("Applying Retrofitting...")
+        alpha = 0.1 # Learning rate for retrofitting
+        epochs = 10
+        
+        for epoch in range(epochs):
+            # Antonyms: Push apart if similar
+            for pair in antonyms:
+                if len(pair) >= 2:
+                    w1, w2 = pair[0], pair[1]
+                    v1, v2 = get_vec(w1), get_vec(w2)
+                    if v1 is not None and v2 is not None:
+                        # Cosine similarity
+                        sim = np.dot(v1, v2) / (np.linalg.norm(v1) * np.linalg.norm(v2) + 1e-9)
+                        if sim > 0.2:
+                            # Push apart
+                            new_v1 = v1 - alpha * v2
+                            new_v2 = v2 - alpha * v1
+                            model.wv[w1] = normalize(new_v1)
+                            model.wv[w2] = normalize(new_v2)
+                            
+            # Synonyms: Pull closer
+            for group in synonyms:
+                # Pull each word towards the centroid of the group (if they exist)
+                valid_words = [w for w in group if get_vec(w) is not None]
+                if len(valid_words) < 2: continue
+                
+                # Simple approach: Pairwise pull
+                # Better: Pull to mean of others? Let's do simple pairwise for compatibility/ease.
+                # Actually, let's pull towards the group mean.
+                group_vecs = [model.wv[w] for w in valid_words]
+                centroid = np.mean(group_vecs, axis=0)
+                
+                for w in valid_words:
+                    new_v = model.wv[w] + alpha * (centroid - model.wv[w])
+                    model.wv[w] = normalize(new_v)
+        
+        print("Retrofitting completed.")
+    else:
+        print(f"Warning: Domain dictionary not found at {dict_path}")
+
+    # --- 2. TF-IDF Calculation ---
+    print("Calculating TF-IDF...")
+    from collections import Counter
+    import math
+    
+    # Calculate IDF
+    # DF: Number of documents (templates) containing word w
+    df_counts = Counter()
+    total_docs = len(sentences)
+    
+    for tokens in sentences:
+        unique_tokens = set(tokens)
+        for t in unique_tokens:
+            df_counts[t] += 1
+            
+    idf = {}
+    for t, count in df_counts.items():
+        idf[t] = math.log(total_docs / (count + 1)) # Add 1 smooth
+        
+    # Generate Event Embeddings (Weighted Average)
     event2vec = {}
     
-    # Add an entry for padding or special tokens? LogAnomaly uses IntId from 1?
-    # Usually we generate for all IntIds present.
-    # We should also cover '0' if it's used as padding or unknown. 
-    # Let's generate a zero vector for '0' or random? "EventId 0" is usually reserved/padding.
+    # Add an entry for padding (0)
     event2vec['0'] = [0.0] * vector_dim 
     
     for int_id, tokens in int_id_to_tokens.items():
@@ -104,14 +182,27 @@ def generate_embeddings(mode='full'):
             vec = np.zeros(vector_dim)
         else:
             vectors = []
+            weights = []
             for t in tokens:
                 if t in model.wv:
-                    vectors.append(model.wv[t])
+                    v = model.wv[t]
+                    # TF: term frequency in this template
+                    # tokens is the list of words in *this* template
+                    tf = tokens.count(t) 
+                    w = tf * idf.get(t, 0)
+                    
+                    vectors.append(v)
+                    weights.append(w)
                 else:
-                    # Should not happen with min_count=1 and training on same corpus
                     pass
+            
             if vectors:
-                vec = np.mean(vectors, axis=0)
+                if sum(weights) > 0:
+                    # Weighted average
+                    vec = np.average(vectors, axis=0, weights=weights)
+                else:
+                    # Fallback to simple mean if all weights are 0 (shouldn't happen with IDF)
+                    vec = np.mean(vectors, axis=0)
             else:
                 vec = np.zeros(vector_dim)
         
