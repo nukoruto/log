@@ -116,7 +116,7 @@ def convert_to_deeplog_format(structured_csv, output_dir, log_file_path=None, mi
         # Merge labels into our session data
         # 'sessions' is a Series indexed by BlockId. 
         # We can create a DataFrame from it to merge.
-        session_df = pd.DataFrame({'EventInts': sessions, 'Times': session_times})
+        session_df = pd.DataFrame({'EventInts': session_ints, 'Times': session_times})
         session_df.index.name = 'BlockId'
         session_df.reset_index(inplace=True)
         session_df['BlockId'] = session_df['BlockId'].astype(str)
