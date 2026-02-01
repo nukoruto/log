@@ -152,7 +152,7 @@ def generate_data(name, window_size, data_dir=Path("data/HDFS/deeplog_input")):
 
     return list(zip(hdfs, hdfs_times, hdfs_labels))
 
-def evaluate(model_path, num_classes=28, window_size=10, data_dir=None, result_dir=None):
+def evaluate(model_path, num_classes=28, window_size=10, data_dir=None, result_dir=None, topk=9):
     if data_dir is None: data_dir = Path("data/HDFS/deeplog_input")
     if result_dir is None: result_dir = Path("evaluation/results/DeepLog")
     
@@ -179,7 +179,7 @@ def evaluate(model_path, num_classes=28, window_size=10, data_dir=None, result_d
     y_true_binary = [] # Session binary labels for F1
     y_pred_binary = [] 
     
-    num_candidates = 9 
+    num_candidates = topk 
     
     print(f"Evaluating Normal Data ({len(normal_data)} sessions)...")
     with torch.no_grad():
@@ -298,6 +298,7 @@ def evaluate(model_path, num_classes=28, window_size=10, data_dir=None, result_d
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument('--mode', choices=['full', 'demo'], default='full')
+    parser.add_argument('--g', type=int, default=9, help='Top-K candidates (g) value for evaluation')
     args = parser.parse_args()
     
     if args.mode == 'full':
@@ -328,4 +329,4 @@ if __name__ == "__main__":
     print(f"Evaluating with window_size={window_size}, num_classes={num_classes} (Mode: {args.mode})")
     print(f"Data Source: {data_dir}")
     print(f"Results: {result_dir}")
-    evaluate(latest_model, window_size=window_size, num_classes=num_classes, data_dir=data_dir, result_dir=result_dir)
+    evaluate(latest_model, window_size=window_size, num_classes=num_classes, data_dir=data_dir, result_dir=result_dir, topk=args.g)

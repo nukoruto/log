@@ -64,8 +64,9 @@ python pipeline/conversion.py
 python pipeline/2_train_deeplog.py
 
 # 3. 評価
-# 正常・異常データに対するスコアリングを行い、IAE/ISEおよびF1スコアを算出します
-python pipeline/3_evaluate_deeplog.py
+# 正常・異常データに対するスコアリングを行い、IAE/ISEおよびF1スコアを算出します。
+# デフォルトのg=9ではRecallが低くなる傾向があるため、より高いF1スコアを得るには g=3 などを推奨します。
+python pipeline/3_evaluate_deeplog.py --g 3
 ```
 
 ## 5. LogAnomaly モデルの実行
