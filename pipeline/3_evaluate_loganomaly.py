@@ -126,11 +126,11 @@ def generate(name, window_size=1, data_dir=None):
 
     return list(zip(hdfs_seqs, hdfs_times, hdfs_labels))
 
-def evaluate_loganomaly(window_size=10, mode='full', num_classes=28):
+def evaluate_loganomaly(window_size=10, mode='full', num_classes=28, num_candidates=9):
     input_size = 1
     hidden_size = 64
     num_layers = 2
-    num_classes = 28
+    # num_classes = 28  # Removed to use argument
     # window_size arg used
     
     if mode == 'full':
@@ -158,23 +158,55 @@ def evaluate_loganomaly(window_size=10, mode='full', num_classes=28):
     model.load_state_dict(checkpoint['state_dict'])
     model.to(device)
     model.eval()
+
+    # Load semantic vectors
+    semantic_vec_path = project_root / 'models' / 'LogDeep' / 'data' / 'hdfs' / 'event2semantic_vec.json'
+    if mode != 'full':
+         # Try 2k path if exists, otherwise fallback
+         p = project_root / 'models' / 'LogDeep' / 'data' / 'hdfs_2k' / 'hdfs' / 'event2semantic_vec.json'
+         if p.exists():
+             semantic_vec_path = p
+    
+    if not semantic_vec_path.exists():
+        print(f"Error: Semantic vector file not found at {semantic_vec_path}")
+        return
+
+    import json
+    with open(semantic_vec_path, 'r') as f:
+        event2vec = json.load(f)
+    
+    # Create embedding matrix (num_classes x 300)
+    embedding_matrix = torch.zeros((num_classes, 300)).to(device)
+    for i in range(num_classes):
+        # seq line is generated with n-1, so intId = i + 1
+        key = str(i + 1)
+        if key in event2vec:
+            embedding_matrix[i] = torch.tensor(event2vec[key]).to(device)
+        else:
+            # If key not found (e.g. 0 padding or new event), leaving it as zeros is fine
+            # But "0" in json is all zeros, maybe use that for i=-1?
+            pass
     
     print(f"Generating test data from {data_dir}...")
     test_normal = generate('hdfs_test_normal', window_size, data_dir)
     test_abnormal = generate('hdfs_test_abnormal', window_size, data_dir)
     
-    scores = []
+    # Storage for results: each g from 1 to 9
+    # Key: g value, Value: {'y_true': [], 'y_pred': []}
+    results = {g: {'y_true': [], 'y_pred': []} for g in range(1, 10)}
+    
+    scores = [] # Keeping original score tracking for IAE/ISE (based on num_candidates arg)
     dt_list = []
     gt_labels_list = []
     
-    y_true_binary = []
-    y_pred_binary = []
-    num_candidates = 1
+    # Pre-compute embedding matrix for faster lookup
     
     print(f"Evaluating Normal Data ({len(test_normal)} sessions)...")
     with torch.no_grad():
         for line, times, labels in test_normal:
-            session_failed = False
+            # Initialize session failure flags for each g
+            session_failed = {g: False for g in range(1, 10)}
+            
             for i in range(len(line) - window_size):
                 seq0 = line[i:i + window_size]
                 target_idx = line[i + window_size]
@@ -184,40 +216,61 @@ def evaluate_loganomaly(window_size=10, mode='full', num_classes=28):
                 t_last = times[i + window_size - 1]
                 dt = max(0, t_target - t_last)
                 
-                seq1 = [0] * 28
+                seq1 = [0] * num_classes
                 log_counter = Counter(seq0)
                 for key in log_counter:
-                    if key < 28:
+                    if key < num_classes:
                         seq1[key] = log_counter[key]
 
-                seq0_t = torch.tensor(seq0, dtype=torch.float).view(-1, window_size, input_size).to(device)
+                seq0_idx = torch.tensor(seq0, dtype=torch.long).to(device)
+                seq0_t = embedding_matrix[seq0_idx].view(-1, window_size, 300)
                 seq1_t = torch.tensor(seq1, dtype=torch.float).view(-1, num_classes, input_size).to(device)
                 
                 output = model(features=[seq0_t, seq1_t], device=device)
-                probs = torch.softmax(output, dim=1)
                 
+                # Check rank of target
+                # descending=True means first element is highest prob
+                sorted_indices = torch.argsort(output, 1, descending=True)[0]
+                
+                # Find rank of target_idx (0-based)
+                # If target_idx is not in sorted_indices (shouldn't happen if coverage is full), we assume worst
+                if target_idx < num_classes:
+                     try:
+                         rank = (sorted_indices == target_idx).nonzero().item()
+                     except ValueError:
+                         rank = num_classes # Not found
+                else:
+                     rank = num_classes # Target out of bounds
+                
+                # Update session failure for each g
+                # If rank < g, then it is in Top-g (Success)
+                # If rank >= g, then it is NOT in Top-g (Failure -> Anomaly)
+                for g in range(1, 10):
+                    if rank >= g:
+                        session_failed[g] = True
+
+                # Calculate scalar score for default calculation (using num_candidates input)
+                probs = torch.softmax(output, dim=1)
                 if 0 <= target_idx < num_classes:
                     prob_gt = probs[0, target_idx].item()
                     y_t = 1.0 - prob_gt
                 else:
                     y_t = 1.0
-                
                 e_t = abs(r_t - y_t)
                 scores.append(e_t)
                 dt_list.append(dt)
                 gt_labels_list.append(r_t)
-                
-                predicted_topk = torch.argsort(output, 1)[0][-num_candidates:]
-                if target_idx not in predicted_topk:
-                    session_failed = True
             
-            y_true_binary.append(0)
-            y_pred_binary.append(1 if session_failed else 0)
+            # End of session
+            for g in range(1, 10):
+                results[g]['y_true'].append(0) # Normal
+                results[g]['y_pred'].append(1 if session_failed[g] else 0)
 
     print(f"Evaluating Abnormal Data ({len(test_abnormal)} sessions)...")
     with torch.no_grad():
         for line, times, labels in test_abnormal:
-            session_failed = False
+            session_failed = {g: False for g in range(1, 10)}
+            
             for i in range(len(line) - window_size):
                 seq0 = line[i:i + window_size]
                 target_idx = line[i + window_size]
@@ -226,36 +279,76 @@ def evaluate_loganomaly(window_size=10, mode='full', num_classes=28):
                 t_target = times[i + window_size]
                 dt = max(0, t_target - times[i + window_size - 1])
                 
-                seq1 = [0] * 28
+                seq1 = [0] * num_classes
                 log_counter = Counter(seq0)
                 for key in log_counter:
-                    if key < 28:
+                    if key < num_classes:
                         seq1[key] = log_counter[key]
 
-                seq0_t = torch.tensor(seq0, dtype=torch.float).view(-1, window_size, input_size).to(device)
+                seq0_idx = torch.tensor(seq0, dtype=torch.long).to(device)
+                seq0_t = embedding_matrix[seq0_idx].view(-1, window_size, 300)
                 seq1_t = torch.tensor(seq1, dtype=torch.float).view(-1, num_classes, input_size).to(device)
                 
                 output = model(features=[seq0_t, seq1_t], device=device)
-                probs = torch.softmax(output, dim=1)
                 
+                sorted_indices = torch.argsort(output, 1, descending=True)[0]
+                
+                if target_idx < num_classes:
+                     try:
+                         rank = (sorted_indices == target_idx).nonzero().item()
+                     except ValueError:
+                         rank = num_classes
+                else:
+                     rank = num_classes
+                
+                for g in range(1, 10):
+                    if rank >= g:
+                        session_failed[g] = True
+                        
+                # Default score calc
+                probs = torch.softmax(output, dim=1)
                 if 0 <= target_idx < num_classes:
                     prob_gt = probs[0, target_idx].item()
                     y_t = 1.0 - prob_gt
                 else:
                     y_t = 1.0
-                    
                 e_t = abs(r_t - y_t)
                 scores.append(e_t)
                 dt_list.append(dt)
                 gt_labels_list.append(r_t)
-                
-                predicted_topk = torch.argsort(output, 1)[0][-num_candidates:]
-                if target_idx not in predicted_topk:
-                    session_failed = True
             
-            y_true_binary.append(1)
-            y_pred_binary.append(1 if session_failed else 0)
+            for g in range(1, 10):
+                results[g]['y_true'].append(1) # Abnormal
+                results[g]['y_pred'].append(1 if session_failed[g] else 0)
     
+    # Calculate Metrics for all g
+    from sklearn.metrics import precision_score, recall_score, f1_score
+    
+    all_metrics = {}
+    print("\n--- Evaluation Results for g=1 to 9 ---")
+    print(f"{'g':<3} | {'Precision':<10} | {'Recall':<10} | {'F1':<10}")
+    print("-" * 43)
+    
+    for g in range(1, 10):
+        y_true = results[g]['y_true']
+        y_pred = results[g]['y_pred']
+        
+        p = precision_score(y_true, y_pred, zero_division=0)
+        r = recall_score(y_true, y_pred, zero_division=0)
+        f1 = f1_score(y_true, y_pred, zero_division=0)
+        
+        all_metrics[str(g)] = {
+            'Precision': float(p),
+            'Recall': float(r),
+            'F1': float(f1)
+        }
+        print(f"{g:<3} | {p:<10.4f} | {r:<10.4f} | {f1:<10.4f}")
+        
+    # Save combined metrics
+    with open(output_dir / 'metrics_multi_g.json', 'w') as f:
+        json.dump(all_metrics, f, indent=4)
+        
+    # Also save the standard single file for the 'num_candidates' requested (for compatibility)
     y_r_t = np.array(gt_labels_list)
     y_e_t = np.array(scores)
     
@@ -265,28 +358,27 @@ def evaluate_loganomaly(window_size=10, mode='full', num_classes=28):
         experiment_name=f"LogAnomaly_HDFS_{mode}_Test", 
         output_dir=output_dir,
         dt=dt_list
-    )
+    ) 
     
-    from sklearn.metrics import precision_score, recall_score, f1_score
-    p = precision_score(y_true_binary, y_pred_binary, zero_division=0)
-    r = recall_score(y_true_binary, y_pred_binary, zero_division=0)
-    f1 = f1_score(y_true_binary, y_pred_binary, zero_division=0)
-    
-    metrics['Precision'] = float(p)
-    metrics['Recall'] = float(r)
-    metrics['F1'] = float(f1)
-    
-    print("Evaluation Results (LogAnomaly):")
+    # Add F1 info for the requested g to the standard metrics.json
+    req_g = str(num_candidates)
+    if req_g in all_metrics:
+        metrics['Precision'] = all_metrics[req_g]['Precision']
+        metrics['Recall'] = all_metrics[req_g]['Recall']
+        metrics['F1'] = all_metrics[req_g]['F1']
+        
+    print("Evaluation Results (LogAnomaly) for requested g={}:".format(num_candidates))
     print(metrics)
     
-    import json
     with open(output_dir / 'metrics.json', 'w') as f:
         json.dump(metrics, f, indent=4)
+
 
 if __name__ == "__main__":
     import argparse
     parser = argparse.ArgumentParser()
     parser.add_argument('--mode', choices=['full', 'demo'], default='full')
+    parser.add_argument('--g', type=int, default=3, help='Top-k candidates (g value)')
     args = parser.parse_args()
     
     mapping_path = None
@@ -304,7 +396,4 @@ if __name__ == "__main__":
         num_classes = df['IntId'].max()
         print(f"Detected num_classes: {num_classes}")
     
-    # Inject window_size into evaluate function via a wrapper or just modify evaluate_loganomaly
-    # Actually evaluate_loganomaly hardcodes window_size. Let's pass it.
-    # We need to change evaluate_loganomaly signature.
-    evaluate_loganomaly(window_size=window_size, mode=args.mode, num_classes=num_classes)
+    evaluate_loganomaly(window_size=window_size, mode=args.mode, num_classes=num_classes, num_candidates=args.g)
