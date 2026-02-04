@@ -178,8 +178,9 @@ def evaluate_loganomaly(window_size=10, mode='full', num_classes=28, num_candida
     # Create embedding matrix (num_classes x 300)
     embedding_matrix = torch.zeros((num_classes, 300)).to(device)
     for i in range(num_classes):
-        # seq line is generated with n-1, so intId = i + 1
-        key = str(i + 1)
+        # seq line is generated with n-1, so intId = i (0-based)
+        # keys in json are now 0-based ('0'..'47')
+        key = str(i)
         if key in event2vec:
             embedding_matrix[i] = torch.tensor(event2vec[key]).to(device)
         else:

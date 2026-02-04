@@ -174,10 +174,14 @@ def generate_embeddings(mode='full'):
     # Generate Event Embeddings (Weighted Average)
     event2vec = {}
     
-    # Add an entry for padding (0)
-    event2vec['0'] = [0.0] * vector_dim 
+    # Add an entry for padding (0) -> Actually '0' is now a class ID.
+    # event2vec['0'] = [0.0] * vector_dim 
     
     for int_id, tokens in int_id_to_tokens.items():
+        # Shift to 0-based index to match model input (which has n-1 applied)
+        # Original IntId (1..N) -> (0..N-1)
+        int_id_0 = str(int(int_id) - 1)
+        
         if not tokens:
             vec = np.zeros(vector_dim)
         else:
@@ -206,7 +210,7 @@ def generate_embeddings(mode='full'):
             else:
                 vec = np.zeros(vector_dim)
         
-        event2vec[int_id] = vec.tolist()
+        event2vec[int_id_0] = vec.tolist()
         
     # Save
     output_path = output_dir / 'event2semantic_vec.json'
