@@ -78,7 +78,7 @@ def generate_embeddings(mode='full'):
     int_id_to_tokens = {}
     
     for _, row in merged.iterrows():
-        int_id = str(row['IntId']) # Use string key for JSON
+        int_id = str(int(row['IntId']) - 1) # Shift to 0-based index
         template = row['EventTemplate']
         tokens = tokenize_template(template)
         sentences.append(tokens)
@@ -178,9 +178,8 @@ def generate_embeddings(mode='full'):
     # event2vec['0'] = [0.0] * vector_dim 
     
     for int_id, tokens in int_id_to_tokens.items():
-        # Shift to 0-based index to match model input (which has n-1 applied)
-        # Original IntId (1..N) -> (0..N-1)
-        int_id_0 = str(int(int_id) - 1)
+        # int_id is already 0-based
+        int_id_0 = int_id
         
         if not tokens:
             vec = np.zeros(vector_dim)
