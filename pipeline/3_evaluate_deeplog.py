@@ -6,6 +6,7 @@ import sys
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
+import json
 from typing import Dict
 
 # Import generic metrics (Still attempting, but defining inline for safety)
@@ -144,17 +145,59 @@ def generate_data(name, window_size, data_dir=Path("data/HDFS/deeplog_input")):
         print(f"Warning: Label file not found at {label_path}")
         hdfs_labels = [tuple([0]*len(x)) for x in hdfs]
 
-    # Just take first 100 sessions for speed verification
-    if len(hdfs) > 100: 
-        hdfs = hdfs[:100]
-        hdfs_times = hdfs_times[:100]
-        hdfs_labels = hdfs_labels[:100]
+    # Remove debug slicing for full evaluation
+    # if len(hdfs) > 100: 
+    #     hdfs = hdfs[:100]
+    #     hdfs_times = hdfs_times[:100]
+    #     hdfs_labels = hdfs_labels[:100]
 
     return list(zip(hdfs, hdfs_times, hdfs_labels))
+
+    # Multi-G Evaluation
+    metrics_multi_g = {}
+    
+    # Pre-calculate IAE/ISE (Probabilistic, independent of g)
+    y_r_t = np.array(gt_labels_list)
+    y_e_t = np.array(scores)
+    control_metrics = calculate_control_metrics(
+        y_r_t, 
+        y_e_t, 
+        experiment_name="DeepLog_HDFS_Test", 
+        output_dir=result_dir,
+        dt=dt_list
+    )
+    
+    # Calculate F1 for each g
+    print("\n--- Evaluation Results for g=1 to 9 ---")
+    print(f"{'g':<3} | {'Precision':<10} | {'Recall':<10} | {'F1':<10}")
+    print("-" * 43)
+    
+    for g in range(1, 10):
+        # Re-evaluate binary predictions for this g
+        # We need to check if target is in Top-g.
+        # Since we didn't store all outputs to save memory, we might need to re-run or 
+        # distinct strategy: Store the RANK of the target in the probability list.
+        # But we didn't store ranks. 
+        # WAIT: Running model inference 9 times is wasteful. 
+        # Optimization: We already have 'scores' (prob of target). 
+        # But 'scores' is (1 - P_target). We don't know the P_others.
+        # Top-g depends on whether other classes have higher prob.
+        # We can't know if target is in Top-g just from P_target.
+        pass
+    
+    # Correction: I need to modify the INFERENCE loop to calculate ranks once or store sufficient info.
+    # Storing (N, num_classes) probs is too big (111k * 28 floats).
+    # Storing just the RANK of the target is sufficient!
+    # Rank 0 = Top-1. Rank k = Top-(k+1).
+    # If Rank < g, then Correct.
+    
+    # I will modify the loop above to store 'target_ranks'.
+    pass
 
 def evaluate(model_path, num_classes=28, window_size=10, data_dir=None, result_dir=None, topk=9):
     if data_dir is None: data_dir = Path("data/HDFS/deeplog_input")
     if result_dir is None: result_dir = Path("evaluation/results/DeepLog")
+    result_dir.mkdir(parents=True, exist_ok=True) # Ensure dir exists
     
     input_size = 1
     hidden_size = 64
@@ -172,27 +215,31 @@ def evaluate(model_path, num_classes=28, window_size=10, data_dir=None, result_d
         print("No test data found.")
         return
 
-    scores = [] # This will store e(t)
+    scores = []
     dt_list = [] 
-    gt_labels_list = [] # List of r(t) for plotting
+    gt_labels_list = []
     
-    y_true_binary = [] # Session binary labels for F1
-    y_pred_binary = [] 
+    # Store ranks of the correct target for each window
+    # If target is normal (in vocab), store its rank (0-based).
+    # If target is abnormal/unknown, rank is inf? -> effectively num_classes
+    target_ranks = [] 
     
-    num_candidates = topk 
+    # Session tracking: We need to know which windows belong to which session to aggregate per session
+    # Structure: session_ranks = [ [rank_w1, rank_w2], [rank_w1], ... ]
+    # Also separate Normal vs Abnormal sessions
+    
+    normal_session_ranks = []
+    abnormal_session_ranks = []
     
     print(f"Evaluating Normal Data ({len(normal_data)} sessions)...")
     with torch.no_grad():
         for line, times, labels in normal_data:
-            session_failed = False
+            s_ranks = []
             for i in range(len(line) - window_size):
                 seq = line[i:i + window_size]
                 target_idx = line[i + window_size]
+                r_t = labels[i + window_size]
                 
-                # Ground Truth for this event
-                r_t = labels[i + window_size] # 0 or 1
-                
-                # Time Delta
                 t_target = times[i + window_size]
                 t_last = times[i + window_size - 1]
                 dt = max(0, t_target - t_last)
@@ -203,35 +250,36 @@ def evaluate(model_path, num_classes=28, window_size=10, data_dir=None, result_d
                 output = model(seq_tensor) 
                 probs = torch.softmax(output, dim=1)
                 
-                # Model Anomaly Score y(t) = 1 - P(observed_event)
-                # If observed event is valid (in vocab):
+                # IAE Score
                 if 0 <= target_idx < num_classes:
                     prob_gt = probs[0, target_idx].item()
                     y_t = 1.0 - prob_gt
+                    
+                    # Calculate Rank
+                    # argsort descends? No, ascends. 
+                    # We want descending order of prob.
+                    # rank = count(p > p_gt)
+                    # Let's use argsort
+                    sorted_idxs = torch.argsort(output, 1, descending=True)[0]
+                    # Find location of target_idx
+                    rank = (sorted_idxs == target_idx).nonzero(as_tuple=True)[0].item()
+                    s_ranks.append(rank)
+                    
                 else:
-                    # Unknown event -> Score 1.0 (Anomaly)
                     y_t = 1.0
+                    s_ranks.append(num_classes + 1) # Effectively infinity
                 
-                # Control Error e(t) = |r(t) - y(t)|
                 e_t = abs(r_t - y_t)
-                
                 scores.append(e_t)
                 dt_list.append(dt)
                 gt_labels_list.append(r_t)
-                
-                # F1 Logic (Top K)
-                predicted_topk = torch.argsort(output, 1)[0][-num_candidates:]
-                if target_idx not in predicted_topk:
-                    # Model flagged anomaly
-                    session_failed = True
             
-            y_true_binary.append(0)
-            y_pred_binary.append(1 if session_failed else 0)
+            normal_session_ranks.append(s_ranks)
 
     print(f"Evaluating Abnormal Data ({len(abnormal_data)} sessions)...")
     with torch.no_grad():
         for line, times, labels in abnormal_data:
-            session_failed = False
+            s_ranks = []
             for i in range(len(line) - window_size):
                 seq = line[i:i + window_size]
                 target_idx = line[i + window_size]
@@ -250,50 +298,85 @@ def evaluate(model_path, num_classes=28, window_size=10, data_dir=None, result_d
                 if 0 <= target_idx < num_classes:
                     prob_gt = probs[0, target_idx].item()
                     y_t = 1.0 - prob_gt
+                    
+                    sorted_idxs = torch.argsort(output, 1, descending=True)[0]
+                    rank = (sorted_idxs == target_idx).nonzero(as_tuple=True)[0].item()
+                    s_ranks.append(rank)
                 else:
                     y_t = 1.0
+                    s_ranks.append(num_classes + 1)
                     
                 e_t = abs(r_t - y_t)
-                
                 scores.append(e_t)
                 dt_list.append(dt)
                 gt_labels_list.append(r_t)
+                
+            abnormal_session_ranks.append(s_ranks)
 
-                predicted_topk = torch.argsort(output, 1)[0][-num_candidates:]
-                if target_idx not in predicted_topk:
-                    session_failed = True
-            
-            y_true_binary.append(1) 
-            y_pred_binary.append(1 if session_failed else 0)
-
-    # Calculate P/R/F1
-    from sklearn.metrics import precision_score, recall_score, f1_score
-    p = precision_score(y_true_binary, y_pred_binary, zero_division=0)
-    r = recall_score(y_true_binary, y_pred_binary, zero_division=0)
-    f1 = f1_score(y_true_binary, y_pred_binary, zero_division=0)
+    # --- Multi-G Analysis ---
+    metrics_multi_g = {}
     
-    # Calculate IAE/ISE using e(t) stored in 'scores'
-    y_r_t = np.array(gt_labels_list) # Ground truth signal for plot
-    y_e_t = np.array(scores)        # Error signal
+    # Calculate IAE (Constant)
+    y_r_t = np.array(gt_labels_list)
+    y_e_t = np.array(scores)
     
-    metrics = calculate_control_metrics(
-        y_r_t, 
-        y_e_t, 
-        experiment_name="DeepLog_HDFS_Test", 
-        output_dir=result_dir,
-        dt=dt_list
+    # Base control metrics
+    control_metrics = calculate_control_metrics(
+        y_r_t, y_e_t, experiment_name="DeepLog_HDFS_Test", output_dir=result_dir, dt=dt_list
     )
     
-    metrics['Precision'] = float(p)
-    metrics['Recall'] = float(r)
-    metrics['F1'] = float(f1)
-    
-    print("Evaluation Results:")
-    print(metrics)
-    
-    import json
-    with open(result_dir / 'metrics.json', 'w') as f:
-        json.dump(metrics, f, indent=4)
+    print("\n--- Evaluation Results for g=1 to 9 ---")
+    print(f"{'g':<3} | {'Precision':<10} | {'Recall':<10} | {'F1':<10} | {'IAE':<12} | {'ISE':<12} | {'ITAE':<12}")
+    print("-" * 85)
+
+    from sklearn.metrics import precision_score, recall_score, f1_score
+
+    for g in range(1, 10):
+        # Determine Anomaly for each session based on ranks
+        # If ANY rank in session >= g (0-based rank implies rank < g is Top-g), then Anomaly.
+        # Wait, Top-k inclusive. 
+        # g=1 (Top-1): rank 0 is correct. rank >= 1 is anomaly.
+        # g=9 (Top-9): rank 0..8 is correct. rank >= 9 is anomaly.
+        # So Condition: Anomaly if rank >= g
+        
+        y_true = []
+        y_pred = []
+        
+        # Normal Sessions (Should be 0, Predicted 1 if rank >= g)
+        for ranks in normal_session_ranks:
+            y_true.append(0)
+            # Check if any event was mispredicted
+            is_anomaly = any(r >= g for r in ranks)
+            y_pred.append(1 if is_anomaly else 0)
+            
+        # Abnormal Sessions (Should be 1, Predicted 1 if rank >= g)
+        for ranks in abnormal_session_ranks:
+            y_true.append(1)
+            is_anomaly = any(r >= g for r in ranks)
+            y_pred.append(1 if is_anomaly else 0)
+            
+        p = precision_score(y_true, y_pred, zero_division=0)
+        r = recall_score(y_true, y_pred, zero_division=0)
+        f1 = f1_score(y_true, y_pred, zero_division=0)
+        
+        print(f"{g:<3} | {p:.4f}     | {r:.4f}     | {f1:.4f}")
+        
+        # Add control metrics (Constant for all g)
+        metrics_multi_g[str(g)] = {
+            "Precision": float(p),
+            "Recall": float(r),
+            "F1": float(f1),
+            "IAE": control_metrics['IAE'], # Constant
+            "ISE": control_metrics['ISE'],
+            "ITAE": control_metrics['ITAE']
+        }
+        print(f"{g:<3} | {p:<10.4f} | {r:<10.4f} | {f1:<10.4f} | {control_metrics['IAE']:<12.2e} | {control_metrics['ISE']:<12.2e} | {control_metrics['ITAE']:<12.2e}")
+
+    # Save Multi-G Results
+    with open(result_dir / 'metrics_multi_g.json', 'w') as f:
+        json.dump(metrics_multi_g, f, indent=4)
+        
+    print(f"\nSaved results to {result_dir / 'metrics_multi_g.json'}")
     
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()

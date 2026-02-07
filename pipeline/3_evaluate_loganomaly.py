@@ -322,13 +322,25 @@ def evaluate_loganomaly(window_size=10, mode='full', num_classes=28, num_candida
                 results[g]['y_true'].append(1) # Abnormal
                 results[g]['y_pred'].append(1 if session_failed[g] else 0)
     
+    # Calculate Control Metrics (Probabilistic, independent of g)
+    y_r_t = np.array(gt_labels_list)
+    y_e_t = np.array(scores)
+    
+    control_metrics = calculate_control_metrics(
+        y_r_t, 
+        y_e_t, 
+        experiment_name=f"LogAnomaly_HDFS_{mode}_Test", 
+        output_dir=output_dir,
+        dt=dt_list
+    ) 
+
     # Calculate Metrics for all g
     from sklearn.metrics import precision_score, recall_score, f1_score
     
     all_metrics = {}
     print("\n--- Evaluation Results for g=1 to 9 ---")
-    print(f"{'g':<3} | {'Precision':<10} | {'Recall':<10} | {'F1':<10}")
-    print("-" * 43)
+    print(f"{'g':<3} | {'Precision':<10} | {'Recall':<10} | {'F1':<10} | {'IAE':<12} | {'ISE':<12} | {'ITAE':<12}")
+    print("-" * 85)
     
     for g in range(1, 10):
         y_true = results[g]['y_true']
@@ -338,41 +350,34 @@ def evaluate_loganomaly(window_size=10, mode='full', num_classes=28, num_candida
         r = recall_score(y_true, y_pred, zero_division=0)
         f1 = f1_score(y_true, y_pred, zero_division=0)
         
+        # Add control metrics (Constant for all g)
         all_metrics[str(g)] = {
             'Precision': float(p),
             'Recall': float(r),
-            'F1': float(f1)
+            'F1': float(f1),
+            'IAE': control_metrics['IAE'],
+            'ISE': control_metrics['ISE'],
+            'ITAE': control_metrics['ITAE']
         }
-        print(f"{g:<3} | {p:<10.4f} | {r:<10.4f} | {f1:<10.4f}")
+        print(f"{g:<3} | {p:<10.4f} | {r:<10.4f} | {f1:<10.4f} | {control_metrics['IAE']:<12.2e} | {control_metrics['ISE']:<12.2e} | {control_metrics['ITAE']:<12.2e}")
         
     # Save combined metrics
     with open(output_dir / 'metrics_multi_g.json', 'w') as f:
         json.dump(all_metrics, f, indent=4)
         
     # Also save the standard single file for the 'num_candidates' requested (for compatibility)
-    y_r_t = np.array(gt_labels_list)
-    y_e_t = np.array(scores)
-    
-    metrics = calculate_control_metrics(
-        y_r_t, 
-        y_e_t, 
-        experiment_name=f"LogAnomaly_HDFS_{mode}_Test", 
-        output_dir=output_dir,
-        dt=dt_list
-    ) 
-    
     # Add F1 info for the requested g to the standard metrics.json
     req_g = str(num_candidates)
     if req_g in all_metrics:
-        metrics['Precision'] = all_metrics[req_g]['Precision']
-        metrics['Recall'] = all_metrics[req_g]['Recall']
-        metrics['F1'] = all_metrics[req_g]['F1']
+        control_metrics['Precision'] = all_metrics[req_g]['Precision']
+        control_metrics['Recall'] = all_metrics[req_g]['Recall']
+        control_metrics['F1'] = all_metrics[req_g]['F1']
         
-    print("Evaluation Results (LogAnomaly) for requested g={}:".format(num_candidates))
-    print(metrics)
+    print(f"\nEvaluation Results (LogAnomaly) for requested g={num_candidates}:")
+    print(control_metrics)
     
     with open(output_dir / 'metrics.json', 'w') as f:
-        json.dump(metrics, f, indent=4)
+        json.dump(control_metrics, f, indent=4)
 
 
 if __name__ == "__main__":
